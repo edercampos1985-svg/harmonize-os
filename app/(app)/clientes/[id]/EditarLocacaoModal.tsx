@@ -15,11 +15,14 @@ const PAYMENT_METHODS = [
   { value: "outros", label: "Outros" },
 ];
 
+// Leva S: "cancelada" saiu daqui de propósito — cancelar agora é uma
+// ação dedicada (botão "Cancelar locação" mais abaixo), não mais um
+// valor deste dropdown, para sempre passar pelas regras de negócio do
+// cancelamento (taxa perdida, bloqueio se já paga, motivo/no-show).
 const STATUS_OPTIONS = [
   { value: "pre_reserva", label: "Pré-reserva" },
   { value: "confirmada", label: "Confirmada" },
   { value: "realizada", label: "Realizada" },
-  { value: "cancelada", label: "Cancelada" },
 ];
 
 interface EquipmentOption {
@@ -70,6 +73,32 @@ export default function EditarLocacaoModal({
   const [notes, setNotes] = useState(rental.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Leva S: cancelar deixou de ser uma opção do dropdown de status —
+  // passa por uma RPC dedicada (cancelar_locacao), que aplica as mesmas
+  // regras de cancelar_agendamento (bloqueia se já foi paga, taxa paga
+  // vira perdida, motivo e não-comparecimento ficam registrados).
+  const [showCancelForm, setShowCancelForm] = useState(false);
+  const [cancelMotivo, setCancelMotivo] = useState("");
+  const [cancelNoShow, setCancelNoShow] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  async function handleCancelarLocacao() {
+    setCancelling(true);
+    setCancelError(null);
+    const { error: rpcError } = await supabase.rpc("cancelar_locacao", {
+      p_rental_id: rental.id,
+      p_motivo: cancelMotivo || null,
+      p_no_show: cancelNoShow,
+    });
+    setCancelling(false);
+    if (rpcError) {
+      setCancelError(rpcError.message || "Não foi possível cancelar. Tente novamente.");
+      return;
+    }
+    onSaved();
+  }
 
   // ------------------------------------------------------------
   // Cliente (leva P.2): corrige quando a locação foi lançada na pessoa
@@ -250,20 +279,26 @@ export default function EditarLocacaoModal({
             </select>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">Status</label>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          {status === "cancelada" ? (
+            <p className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800/50 dark:text-neutral-400">
+              Esta locação está cancelada. Para reativar, use "Reativar" na lista de agendamentos deste cliente.
+            </p>
+          ) : (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">Observação</label>
@@ -293,6 +328,53 @@ export default function EditarLocacaoModal({
             {saving ? "Salvando..." : "Salvar"}
           </button>
         </div>
+
+        {status !== "cancelada" && (
+          showCancelForm ? (
+            <div className="mt-3 rounded-xl border border-red-200 p-3 dark:border-red-900/50">
+              <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                Motivo do cancelamento (opcional)
+              </label>
+              <textarea
+                value={cancelMotivo}
+                onChange={(e) => setCancelMotivo(e.target.value)}
+                rows={2}
+                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              />
+              <label className="mt-2 flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
+                <input
+                  type="checkbox"
+                  checked={cancelNoShow}
+                  onChange={(e) => setCancelNoShow(e.target.checked)}
+                />
+                O cliente não compareceu (no-show)
+              </label>
+              {cancelError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{cancelError}</p>}
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => setShowCancelForm(false)}
+                  className="flex-1 rounded-xl border border-neutral-300 py-2 text-xs font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
+                >
+                  Voltar
+                </button>
+                <button
+                  onClick={handleCancelarLocacao}
+                  disabled={cancelling}
+                  className="flex-1 rounded-xl bg-red-600 py-2 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {cancelling ? "Cancelando..." : "Confirmar cancelamento"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowCancelForm(true)}
+              className="mt-3 w-full rounded-xl border border-red-200 py-2.5 text-sm font-medium text-red-600 dark:border-red-900/50 dark:text-red-400"
+            >
+              Cancelar locação
+            </button>
+          )
+        )}
       </div>
     </div>
   );
