@@ -77,7 +77,7 @@ export default function ReservarHiproModal({
       if ((insertError as { code?: string }).code === "23P01") {
         setError(`⚠️ ${equipment?.name ?? "Esse equipamento"} já está reservado nessa data.`);
       } else {
-        setError("Não foi possível salvar a reserva. Tente novamente.");
+        setError(insertError.message || "Não foi possível salvar a reserva. Tente novamente.");
       }
       return;
     }
