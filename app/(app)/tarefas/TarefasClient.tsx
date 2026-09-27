@@ -37,6 +37,18 @@ export default function TarefasClient({
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
+  // Adiar (pendente -> nova data): não tem regra de negócio nenhuma por
+  // trás, é só trocar due_date — por isso vai direto, sem RPC.
+  const [adiarTaskId, setAdiarTaskId] = useState<string | null>(null);
+  const [adiarData, setAdiarData] = useState("");
+  const [adiarErro, setAdiarErro] = useState<string | null>(null);
+
+  // Desfazer conclusão: tarefa de funil pode ter criado a tarefa de
+  // follow-up seguinte ao ser concluída, então passa pela RPC
+  // desfazer_conclusao_tarefa (leva V), que cuida de desfazer isso com
+  // segurança (ou bloquear se a tarefa seguinte já foi mexida).
+  const [desfazerErro, setDesfazerErro] = useState<Record<string, string>>({});
+
   useEffect(() => {
     setPendentes(initialPendentes);
   }, [initialPendentes]);
@@ -85,6 +97,41 @@ export default function TarefasClient({
     setPendentes((prev) => prev.filter((t) => t.id !== taskId));
     await supabase.from("tasks").update({ status: "concluida", completed_at: new Date().toISOString() }).eq("id", taskId);
     setTaskBusyId(null);
+    router.refresh();
+  }
+
+  async function adiarTarefa(taskId: string) {
+    if (!adiarData) {
+      setAdiarErro("Escolha a nova data.");
+      return;
+    }
+    setTaskBusyId(taskId);
+    setAdiarErro(null);
+    const { error } = await supabase.from("tasks").update({ due_date: adiarData }).eq("id", taskId);
+    setTaskBusyId(null);
+    if (error) {
+      setAdiarErro(error.message || "Não foi possível adiar. Tente novamente.");
+      return;
+    }
+    setAdiarTaskId(null);
+    setAdiarData("");
+    router.refresh();
+  }
+
+  async function desfazerConclusao(taskId: string) {
+    if (!window.confirm("Desfazer a conclusão desta tarefa? Ela volta pra lista de pendentes.")) return;
+    setTaskBusyId(taskId);
+    setDesfazerErro((prev) => {
+      const { [taskId]: _omit, ...rest } = prev;
+      return rest;
+    });
+    const { error } = await supabase.rpc("desfazer_conclusao_tarefa", { p_task_id: taskId });
+    setTaskBusyId(null);
+    if (error) {
+      setDesfazerErro((prev) => ({ ...prev, [taskId]: error.message || "Não foi possível desfazer. Tente novamente." }));
+      return;
+    }
+    setConcluidas((prev) => prev.filter((t) => t.id !== taskId));
     router.refresh();
   }
 
@@ -146,32 +193,82 @@ export default function TarefasClient({
                     <span className="flex-shrink-0 text-[10px] text-neutral-400">{expanded ? "▲" : "▼"}</span>
                   </button>
                   {expanded && (
-                    <div className="flex gap-2 border-t border-brand-blue/10 px-3 py-2 dark:border-brand-blue/15">
-                      {task.type === "manual" ? (
-                        <button
-                          disabled={busy}
-                          onClick={() => completeManualTask(task.id)}
-                          className="flex-1 rounded-lg bg-brand-teal/10 py-1.5 text-xs font-medium text-brand-teal disabled:opacity-50"
-                        >
-                          ✅ Concluir
-                        </button>
-                      ) : (
-                        <>
+                    <div className="border-t border-brand-blue/10 px-3 py-2 dark:border-brand-blue/15">
+                      <div className="flex gap-2">
+                        {task.type === "manual" ? (
                           <button
                             disabled={busy}
-                            onClick={() => registerContactAttempt(task.id, true)}
+                            onClick={() => completeManualTask(task.id)}
                             className="flex-1 rounded-lg bg-brand-teal/10 py-1.5 text-xs font-medium text-brand-teal disabled:opacity-50"
                           >
-                            ✅ Respondeu
+                            ✅ Concluir
                           </button>
+                        ) : (
+                          <>
+                            <button
+                              disabled={busy}
+                              onClick={() => registerContactAttempt(task.id, true)}
+                              className="flex-1 rounded-lg bg-brand-teal/10 py-1.5 text-xs font-medium text-brand-teal disabled:opacity-50"
+                            >
+                              ✅ Respondeu
+                            </button>
+                            <button
+                              disabled={busy}
+                              onClick={() => registerContactAttempt(task.id, false)}
+                              className="flex-1 rounded-lg bg-amber-100 py-1.5 text-xs font-medium text-amber-700 disabled:opacity-50 dark:bg-amber-900/30 dark:text-amber-400"
+                            >
+                              🔁 Sem resposta
+                            </button>
+                          </>
+                        )}
+                        {adiarTaskId !== task.id && (
                           <button
                             disabled={busy}
-                            onClick={() => registerContactAttempt(task.id, false)}
-                            className="flex-1 rounded-lg bg-amber-100 py-1.5 text-xs font-medium text-amber-700 disabled:opacity-50 dark:bg-amber-900/30 dark:text-amber-400"
+                            onClick={() => {
+                              setAdiarTaskId(task.id);
+                              setAdiarData(task.due_date);
+                              setAdiarErro(null);
+                            }}
+                            className="rounded-lg border border-neutral-300 px-3 text-xs font-medium text-neutral-500 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400"
                           >
-                            🔁 Sem resposta
+                            📅 Adiar
                           </button>
-                        </>
+                        )}
+                      </div>
+
+                      {adiarTaskId === task.id && (
+                        <div className="mt-2 rounded-lg bg-neutral-50 p-2 dark:bg-neutral-800/50">
+                          <label className="mb-1 block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+                            Nova data
+                          </label>
+                          <input
+                            type="date"
+                            value={adiarData}
+                            onChange={(e) => setAdiarData(e.target.value)}
+                            className="w-full rounded-lg border border-neutral-300 px-2 py-1.5 text-xs dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                          />
+                          {adiarErro && <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{adiarErro}</p>}
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAdiarTaskId(null);
+                                setAdiarErro(null);
+                              }}
+                              className="flex-1 rounded-lg border border-neutral-300 py-1.5 text-xs font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
+                            >
+                              Desistir
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => adiarTarefa(task.id)}
+                              className="flex-1 rounded-lg bg-neutral-900 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+                            >
+                              {busy ? "Salvando..." : "Confirmar nova data"}
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}
@@ -192,23 +289,45 @@ export default function TarefasClient({
           </p>
         ) : (
           <div className="space-y-1.5">
-            {filteredConcluidas.map((task) => (
-              <div
-                key={task.id}
-                id={`task-${task.id}`}
-                className="flex items-center justify-between gap-2 rounded-xl bg-neutral-100/70 px-3 py-2 text-xs dark:bg-neutral-800/40"
-              >
-                <div>
-                  <p className="font-medium text-neutral-500 line-through decoration-neutral-400 dark:text-neutral-400">
-                    {task.title}
-                  </p>
-                  {task.client_name && <p className="text-[10px] text-neutral-400">{task.client_name}</p>}
+            {filteredConcluidas.map((task) => {
+              const expanded = expandedTaskId === task.id;
+              const busy = taskBusyId === task.id;
+              const erro = desfazerErro[task.id];
+              return (
+                <div
+                  key={task.id}
+                  id={`task-${task.id}`}
+                  className="overflow-hidden rounded-xl bg-neutral-100/70 dark:bg-neutral-800/40"
+                >
+                  <button
+                    onClick={() => setExpandedTaskId((cur) => (cur === task.id ? null : task.id))}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs"
+                  >
+                    <div>
+                      <p className="font-medium text-neutral-500 line-through decoration-neutral-400 dark:text-neutral-400">
+                        {task.title}
+                      </p>
+                      {task.client_name && <p className="text-[10px] text-neutral-400">{task.client_name}</p>}
+                    </div>
+                    <span className="flex-shrink-0 text-[10px] text-neutral-400">
+                      {task.completed_at ? formatDate(task.completed_at.slice(0, 10)) : ""}
+                    </span>
+                  </button>
+                  {expanded && (
+                    <div className="border-t border-neutral-200 px-3 py-2 dark:border-neutral-700">
+                      <button
+                        disabled={busy}
+                        onClick={() => desfazerConclusao(task.id)}
+                        className="w-full rounded-lg border border-neutral-300 py-1.5 text-xs font-medium text-neutral-600 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300"
+                      >
+                        {busy ? "Desfazendo..." : "↩️ Desfazer conclusão (foi engano)"}
+                      </button>
+                      {erro && <p className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">{erro}</p>}
+                    </div>
+                  )}
                 </div>
-                <span className="flex-shrink-0 text-[10px] text-neutral-400">
-                  {task.completed_at ? formatDate(task.completed_at.slice(0, 10)) : ""}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
