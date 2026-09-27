@@ -15,7 +15,7 @@ export default async function ClienteDetailPage({ params }: { params: { id: stri
   const { data: rentals } = await supabase
     .from("rentals")
     .select(
-      "id, event_date, event_date_end, shots, calculated_value, payment_method, status, rescheduled, equipment_id, notes, equipments(name)"
+      "id, event_date, event_date_end, shots, calculated_value, payment_method, status, rescheduled, equipment_id, notes, equipments(name, serial_number, anvisa_registro)"
     )
     .eq("client_id", params.id)
     .order("event_date", { ascending: false });
