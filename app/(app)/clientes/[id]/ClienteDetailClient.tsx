@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { FileText } from "lucide-react";
 import { formatCurrency, formatDate, buildMapsLink, buildWazeLink, buildWhatsAppLink } from "@/lib/format";
 import type { PricingConfig } from "@/lib/rental-pricing";
 import CalculadoraLocacaoModal from "@/components/CalculadoraLocacaoModal";
+import GerarContratoModal from "@/components/GerarContratoModal";
 import EditarClienteModal from "./EditarClienteModal";
 import EditarLocacaoModal from "./EditarLocacaoModal";
 import ReservarHiproModal from "../../agenda/ReservarHiproModal";
@@ -32,6 +34,11 @@ interface Client {
   parceiro?: boolean;
   treatment?: string | null;
   display_name?: string | null;
+  // Leva W/X: documento e dados alternativos usados na geração do
+  // contrato de locação e da NF-e.
+  document?: string | null;
+  contrato_nome?: string | null;
+  contrato_endereco?: string | null;
 }
 
 interface RentalRow {
@@ -47,7 +54,7 @@ interface RentalRow {
   rescheduled: boolean;
   equipment_id: string;
   notes: string | null;
-  equipments?: { name: string } | null;
+  equipments?: { name: string; serial_number?: string | null; anvisa_registro?: string | null } | null;
 }
 
 interface EquipmentOption {
@@ -100,6 +107,7 @@ export default function ClienteDetailClient({
   const [reservaOpen, setReservaOpen] = useState(false);
   const [editClientOpen, setEditClientOpen] = useState(false);
   const [editingRental, setEditingRental] = useState<RentalRow | null>(null);
+  const [contratoRental, setContratoRental] = useState<RentalRow | null>(null);
 
   const totalLocacoes = rentals.length;
   // Faturado e ticket médio saem da contagem contabilizável, não do
@@ -282,7 +290,22 @@ export default function ClienteDetailClient({
               <span className="text-xs text-neutral-500 dark:text-neutral-400">
                 {PAYMENT_LABELS[r.payment_method] ?? r.payment_method}
               </span>
-              <span className="font-medium text-brand-teal">{formatCurrency(Number(r.calculated_value))}</span>
+              <div className="flex items-center gap-3">
+                <span className="font-medium text-brand-teal">{formatCurrency(Number(r.calculated_value))}</span>
+                {r.status !== "cancelada" && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setContratoRental(r);
+                    }}
+                    title="Gerar contrato"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-400 hover:bg-neutral-100 hover:text-brand-teal dark:hover:bg-neutral-800"
+                  >
+                    <FileText size={15} strokeWidth={1.75} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -304,6 +327,7 @@ export default function ClienteDetailClient({
               <th className="px-4 py-3 text-right">Valor</th>
               <th className="px-4 py-3">Pagamento</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody>
@@ -336,11 +360,26 @@ export default function ClienteDetailClient({
                     {r.rescheduled && " · ↻"}
                   </span>
                 </td>
+                <td className="whitespace-nowrap px-4 py-3 text-right">
+                  {r.status !== "cancelada" && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setContratoRental(r);
+                      }}
+                      title="Gerar contrato"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-400 hover:bg-neutral-100 hover:text-brand-teal dark:hover:bg-neutral-800"
+                    >
+                      <FileText size={15} strokeWidth={1.75} />
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
             {rentals.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-neutral-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-neutral-400">
                   Nenhuma locação registrada ainda.
                 </td>
               </tr>
@@ -409,6 +448,10 @@ export default function ClienteDetailClient({
             router.refresh();
           }}
         />
+      )}
+
+      {contratoRental && (
+        <GerarContratoModal rental={contratoRental} client={client} onClose={() => setContratoRental(null)} />
       )}
     </div>
   );
