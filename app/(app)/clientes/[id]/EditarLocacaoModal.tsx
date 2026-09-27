@@ -180,7 +180,7 @@ export default function EditarLocacaoModal({
       if (rpcError.code === "23P01") {
         setError("⚠️ Esse equipamento já está reservado nessa data.");
       } else {
-        setError("Não foi possível salvar. Tente novamente.");
+        setError(rpcError.message || "Não foi possível salvar. Tente novamente.");
       }
       return;
     }
