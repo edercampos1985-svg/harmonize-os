@@ -172,6 +172,13 @@ export default function CalculadoraLocacaoModal({
   const [eventDate, setEventDate] = useState(() =>
     mode.kind === "finalize" ? mode.reservation.eventDate : new Date().toISOString().slice(0, 10)
   );
+  // Leva W: período de vários dias. Só existe no modo "create" (locação
+  // lançada direto, sem passar por pré-reserva de um dia específico da
+  // Agenda) — é a exceção, não a regra, por isso nasce fechado e o
+  // usuário precisa marcar a caixinha para aparecer. Quando fechado,
+  // eventDateEnd nunca é enviado (null = locação de um dia só).
+  const [isPeriodo, setIsPeriodo] = useState(false);
+  const [eventDateEnd, setEventDateEnd] = useState("");
   const equipmentLabel = mode.kind === "finalize" ? mode.reservation.equipmentName : equipmentsList.find((e) => e.id === equipmentId)?.name ?? "";
 
   const [pendingReservations, setPendingReservations] = useState<PendingReservation[]>([]);
@@ -494,6 +501,10 @@ export default function CalculadoraLocacaoModal({
       setError("Preencha o equipamento e a data.");
       return;
     }
+    if (mode.kind === "create" && isPeriodo && (!eventDateEnd || eventDateEnd < eventDate)) {
+      setError("Informe uma data final válida (igual ou depois da data inicial).");
+      return;
+    }
     if (isMentoria) {
       if (!patientCount || patientCountNumber <= 0) {
         setError("Informe a quantidade de pacientes modelo.");
@@ -561,6 +572,7 @@ export default function CalculadoraLocacaoModal({
         p_notes: notes || null,
         p_pago: false,
         p_pix_conta: primeiraPixConta,
+        p_event_date_end: isPeriodo ? eventDateEnd : null,
       });
       if (rpcError) {
         setSaving(false);
@@ -980,6 +992,37 @@ export default function CalculadoraLocacaoModal({
                 <p className="col-span-2 -mt-1 text-[11px] text-neutral-400">
                   Equipamento e data vieram da pré-reserva vinculada. Clique em "desvincular" acima para escolher outros.
                 </p>
+              )}
+              {!linkedReservationId && (
+                <div className="col-span-2">
+                  <label className="flex items-center gap-2 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                    <input
+                      type="checkbox"
+                      checked={isPeriodo}
+                      onChange={(e) => {
+                        setIsPeriodo(e.target.checked);
+                        if (!e.target.checked) setEventDateEnd("");
+                      }}
+                      className="h-4 w-4 rounded border-neutral-300 dark:border-neutral-700"
+                    />
+                    Locação de período (mais de um dia)
+                  </label>
+                  {isPeriodo && (
+                    <div className="mt-2">
+                      <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">Até</label>
+                      <input
+                        type="date"
+                        value={eventDateEnd}
+                        min={eventDate}
+                        onChange={(e) => setEventDateEnd(e.target.value)}
+                        className="w-full max-w-[200px] rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                      />
+                      <p className="mt-1 text-[11px] text-neutral-400">
+                        O equipamento fica bloqueado na Agenda em todos os dias do período, igual a uma reserva de um dia só.
+                      </p>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
