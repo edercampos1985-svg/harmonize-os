@@ -90,7 +90,22 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`hidden flex-col overflow-x-hidden border-r border-white/50 bg-white/70 p-4 backdrop-blur-xl transition-[width] duration-200 ease-in-out dark:border-neutral-800/60 dark:bg-neutral-900/60 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto ${
+      // flex-shrink-0 é a correção do bug "menu encolhe e a logo fica
+      // distorcida" (visto no notebook ao entrar no Funil, e em várias
+      // telas no tablet): assim que o aside ganhou overflow-y/x não-visible
+      // (para o scroll independente e a transição de largura), o navegador
+      // parou de respeitar w-60/w-16 como largura mínima nesse flex row —
+      // por padrão, um item flex só recusa encolher abaixo do próprio
+      // conteúdo quando overflow é visible; com overflow diferente de
+      // visible, a largura mínima automática vira 0. Em qualquer página cujo
+      // conteúdo principal (main) precise de mais espaço horizontal do que
+      // sobrou (tabela larga, board do Funil), o menu inteiro era espremido
+      // junto — texto cortado, ícones e logo minúsculos e "esmagados".
+      // flex-shrink-0 tira o aside dessa distribuição de encolhimento: ele
+      // sempre fica exatamente em w-60 (ou w-16 recolhido), e quem sobra
+      // sem espaço é o conteúdo da página, que já tem seu próprio scroll
+      // horizontal onde precisa (ex: overflow-x-auto do board do Funil).
+      className={`hidden flex-shrink-0 flex-col overflow-x-hidden border-r border-white/50 bg-white/70 p-4 backdrop-blur-xl transition-[width] duration-200 ease-in-out dark:border-neutral-800/60 dark:bg-neutral-900/60 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto ${
         collapsed ? "md:w-16" : "w-60"
       }`}
     >
