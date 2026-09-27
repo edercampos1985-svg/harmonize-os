@@ -514,7 +514,7 @@ export default function CalculadoraLocacaoModal({
       });
       if (rpcError) {
         setSaving(false);
-        setError("Não foi possível finalizar a reserva vinculada. Tente novamente.");
+        setError(rpcError.message || "Não foi possível finalizar a reserva vinculada. Tente novamente.");
         return;
       }
       rentalId = data as string;
@@ -541,7 +541,7 @@ export default function CalculadoraLocacaoModal({
               : `⚠️ O ${equipmentName} já está reservado neste período.`
           );
         } else {
-          setError("Não foi possível salvar a locação. Tente novamente.");
+          setError(rpcError.message || "Não foi possível salvar a locação. Tente novamente.");
         }
         return;
       }
@@ -558,7 +558,7 @@ export default function CalculadoraLocacaoModal({
       });
       if (rpcError) {
         setSaving(false);
-        setError("Não foi possível finalizar a reserva. Tente novamente.");
+        setError(rpcError.message || "Não foi possível finalizar a reserva. Tente novamente.");
         return;
       }
       rentalId = data as string;
