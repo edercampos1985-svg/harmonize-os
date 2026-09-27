@@ -46,7 +46,18 @@ comment on column public.equipments.status_previsto_fim is
 
 -- ------------------------------------------------------------
 -- 2. definir_status_equipamento ganha p_previsto_fim
+--
+-- IMPORTANTE: adicionar um parâmetro novo muda a assinatura da função,
+-- e "create or replace" NÃO substitui nesse caso — o Postgres cria uma
+-- segunda versão (sobrecarga) coexistindo com a de 3 parâmetros da leva
+-- T. O "grant execute ... to authenticated" sem lista de argumentos
+-- (mais abaixo) fica ambíguo entre as duas e quebra a transação
+-- inteira. Por isso o drop explícito da assinatura antiga antes de
+-- recriar — mesmo problema e mesma correção da leva S
+-- (cancelar_agendamento).
 -- ------------------------------------------------------------
+drop function if exists public.definir_status_equipamento(uuid, text, text);
+
 create or replace function public.definir_status_equipamento(
   p_equipment_id uuid,
   p_status text,
