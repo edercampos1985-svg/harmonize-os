@@ -46,9 +46,27 @@ comment on column public.rentals.event_date_end is
 -- parâmetro no fim, default null = comportamento antigo intacto), por
 -- isso o drop explícito antes do create or replace — create or replace
 -- não substitui quando a lista de parâmetros muda, e o grant sem lista
--- de tipos fica ambíguo entre as duas versões (mesmo bug de sempre,
--- já visto em cancelar_agendamento e definir_status_equipamento).
-drop function if exists public.create_rental(uuid, uuid, date, integer, numeric, payment_method_type, text, boolean, text);
+-- de tipos fica ambíguo entre as versões (mesmo bug de sempre, já visto
+-- em cancelar_agendamento e definir_status_equipamento). Um "drop
+-- function" com uma lista de tipos fixa só cobre UMA assinatura antiga
+-- específica — como esta função já mudou de assinatura mais de uma vez
+-- no histórico do projeto, pode sobrar mais de uma versão velha no
+-- banco. Por isso o bloco abaixo descobre e apaga TODAS as versões de
+-- create_rental que existirem, seja qual for a assinatura, antes de
+-- recriar a função.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'create_rental'
+  loop
+    execute format('drop function %s', r.sig);
+  end loop;
+end $$;
 
 create or replace function public.create_rental(
   p_client_id uuid,
@@ -136,11 +154,24 @@ begin
 end;
 $$;
 
-grant execute on function public.create_rental to authenticated;
+grant execute on function public.create_rental(uuid, uuid, date, integer, numeric, payment_method_type, text, boolean, text, date) to authenticated;
 
 -- update_rental ganha p_event_date_end (leva W), mesmo motivo/mesmo
--- padrão do drop acima.
-drop function if exists public.update_rental(uuid, uuid, date, integer, numeric, payment_method_type, event_status_type, text);
+-- padrão do bloco acima: apaga todas as versões existentes antes de
+-- recriar, não só uma assinatura específica.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'update_rental'
+  loop
+    execute format('drop function %s', r.sig);
+  end loop;
+end $$;
 
 create or replace function public.update_rental(
   p_rental_id uuid,
@@ -262,4 +293,4 @@ begin
 end;
 $$;
 
-grant execute on function public.update_rental to authenticated;
+grant execute on function public.update_rental(uuid, uuid, date, integer, numeric, payment_method_type, event_status_type, text, date) to authenticated;
