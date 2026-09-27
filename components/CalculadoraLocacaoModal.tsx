@@ -230,6 +230,38 @@ export default function CalculadoraLocacaoModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingReservations]);
 
+  // E7: aviso (não bloqueia) quando o mesmo cliente já tem o OUTRO HIPRO
+  // reservado no mesmo dia — mais provável de ser engano de digitação do
+  // que dois procedimentos de verdade no mesmo dia. Só faz sentido em
+  // "create": no "finalize" o cliente/equipamento/data já vêm de uma
+  // reserva existente, que já passou por essa checagem quando foi criada.
+  const [outroEquipAviso, setOutroEquipAviso] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    setOutroEquipAviso(null);
+    if (mode.kind !== "create" || !activeClientId || !equipmentId || !eventDate) return;
+    supabase
+      .from("calendar_events")
+      .select("equipment_id, equipments(name)")
+      .eq("client_id", activeClientId)
+      .eq("date_start", eventDate)
+      .neq("status", "cancelada")
+      .not("equipment_id", "is", null)
+      .neq("equipment_id", equipmentId)
+      .limit(1)
+      .then(({ data }) => {
+        if (!active) return;
+        const outro = data?.[0] as any;
+        if (!outro) return;
+        const outroNome = (Array.isArray(outro.equipments) ? outro.equipments[0] : outro.equipments)?.name ?? "outro equipamento";
+        setOutroEquipAviso(`⚠️ ${activeClientName || "Este cliente"} já tem uma reserva no ${outroNome} neste mesmo dia. Confira se não é engano antes de continuar.`);
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode.kind, activeClientId, equipmentId, eventDate]);
+
   // ------------------------------------------------------------
   // Contagem do equipamento (ou pacientes modelo, em mentoria)
   // ------------------------------------------------------------
@@ -896,6 +928,12 @@ export default function CalculadoraLocacaoModal({
             <button type="button" onClick={handleUnlinkReservation} className="whitespace-nowrap underline underline-offset-2">
               desvincular
             </button>
+          </div>
+        )}
+
+        {outroEquipAviso && (
+          <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-400">
+            {outroEquipAviso}
           </div>
         )}
 
