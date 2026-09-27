@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -18,6 +19,8 @@ import {
   Receipt,
   Settings,
   LogOut,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -38,6 +41,13 @@ const NAV_ITEMS = [
   { href: "/configuracoes", label: "Configurações", icon: Settings, module: "configuracoes" },
 ];
 
+// Chave de localStorage pra lembrar a preferência de menu recolhido —
+// mesmo padrão do ThemeToggle (harmonize-theme): guarda só neste
+// navegador/dispositivo, não sincroniza entre aparelhos, e começa sempre
+// aberto (valor default) até o useEffect ler o que foi salvo, pra não
+// depender de localStorage durante a renderização no servidor.
+const COLLAPSE_STORAGE_KEY = "harmonize-sidebar-collapsed";
+
 export default function Sidebar({
   name,
   permissions,
@@ -50,6 +60,25 @@ export default function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem(COLLAPSE_STORAGE_KEY) === "1");
+    } catch {
+      // localStorage indisponível, segue com o menu aberto
+    }
+  }, []);
+
+  function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem(COLLAPSE_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      // localStorage indisponível, a preferência só não persiste
+    }
+  }
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -60,19 +89,35 @@ export default function Sidebar({
   const items = NAV_ITEMS.filter((item) => isAdmin || permissions?.[item.module]);
 
   return (
-    <aside className="hidden w-60 flex-col border-r border-white/50 bg-white/70 p-4 backdrop-blur-xl dark:border-neutral-800/60 dark:bg-neutral-900/60 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto">
-      <div className="mb-8 px-2">
-        <img src="/harmonize-logo-full.png" alt="Harmonize" className="h-11 w-auto dark:hidden" />
-        <img
-          src="/harmonize-logo-full-dark.png"
-          alt="Harmonize"
-          className="hidden h-11 w-auto dark:block"
-        />
-        <p className="mt-2 truncate text-xs font-medium text-neutral-400 dark:text-neutral-500">{name}</p>
+    <aside
+      className={`hidden flex-col overflow-x-hidden border-r border-white/50 bg-white/70 p-4 backdrop-blur-xl transition-[width] duration-200 ease-in-out dark:border-neutral-800/60 dark:bg-neutral-900/60 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto ${
+        collapsed ? "md:w-16" : "w-60"
+      }`}
+    >
+      <div className={`mb-8 flex items-center ${collapsed ? "flex-col gap-2" : "justify-between gap-2 px-2"}`}>
+        {!collapsed && (
+          <div className="min-w-0 flex-1">
+            <img src="/harmonize-logo-full.png" alt="Harmonize" className="h-11 w-auto dark:hidden" />
+            <img
+              src="/harmonize-logo-full-dark.png"
+              alt="Harmonize"
+              className="hidden h-11 w-auto dark:block"
+            />
+            <p className="mt-2 truncate text-xs font-medium text-neutral-400 dark:text-neutral-500">{name}</p>
+          </div>
+        )}
+        <button
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+          title={collapsed ? "Expandir menu" : "Recolher menu"}
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-600 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
+        >
+          {collapsed ? <ChevronRight size={16} strokeWidth={1.75} /> : <ChevronLeft size={16} strokeWidth={1.75} />}
+        </button>
       </div>
 
-      <div className="mb-2">
-        <GlobalSearch />
+      <div className={`mb-2 ${collapsed ? "flex justify-center" : ""}`}>
+        <GlobalSearch compact={collapsed} />
       </div>
 
       <nav className="flex-1 space-y-0.5">
@@ -83,27 +128,33 @@ export default function Sidebar({
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
+              title={collapsed ? item.label : undefined}
+              className={`flex items-center rounded-lg text-sm transition ${
+                collapsed ? "justify-center px-0 py-2" : "gap-3 px-3 py-2"
+              } ${
                 active
                   ? "bg-neutral-900 font-medium text-white dark:bg-white dark:text-neutral-900"
                   : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
               }`}
             >
               <Icon size={17} strokeWidth={1.75} className={active ? "" : "text-neutral-400 dark:text-neutral-500"} />
-              <span>{item.label}</span>
+              {!collapsed && <span>{item.label}</span>}
             </Link>
           );
         })}
       </nav>
 
       <div className="mt-2 space-y-0.5 border-t border-neutral-200 pt-2 dark:border-neutral-800">
-        <ThemeToggle />
+        <ThemeToggle compact={collapsed} className={collapsed ? "mx-auto h-8 w-8" : undefined} />
         <button
           onClick={handleLogout}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-neutral-500 transition hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+          title={collapsed ? "Sair" : undefined}
+          className={`flex items-center rounded-lg text-left text-sm text-neutral-500 transition hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800 ${
+            collapsed ? "mx-auto h-8 w-8 justify-center" : "w-full gap-3 px-3 py-2"
+          }`}
         >
           <LogOut size={17} strokeWidth={1.75} className="text-neutral-400 dark:text-neutral-500" />
-          Sair
+          {!collapsed && "Sair"}
         </button>
       </div>
     </aside>
