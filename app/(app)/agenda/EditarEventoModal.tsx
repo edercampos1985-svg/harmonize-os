@@ -65,6 +65,13 @@ export default function EditarEventoModal({
   const [showFinalize, setShowFinalize] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  // Leva S: cancelar passa a pedir motivo/não-comparecimento e a ir pela
+  // RPC cancelar_agendamento (bloqueia se já foi paga, vira taxa perdida
+  // se a taxa estava paga) em vez do update direto de antes, que pulava
+  // essas duas regras.
+  const [showCancelForm, setShowCancelForm] = useState(false);
+  const [cancelMotivo, setCancelMotivo] = useState("");
+  const [cancelNoShow, setCancelNoShow] = useState(false);
   const [title, setTitle] = useState(event.title);
   const [localClients, setLocalClients] = useState(clients);
   const [clientId, setClientId] = useState(event.client_id ?? "");
@@ -75,13 +82,16 @@ export default function EditarEventoModal({
   const [confirmarExclusao, setConfirmarExclusao] = useState(false);
 
   async function handleCancelReservation() {
-    if (!window.confirm("Cancelar esta reserva? O equipamento fica livre nessa data de novo.")) return;
     setCancelling(true);
     setCancelError(null);
-    const { error } = await supabase.from("calendar_events").update({ status: "cancelada" }).eq("id", event.id);
+    const { error } = await supabase.rpc("cancelar_agendamento", {
+      p_event_id: event.id,
+      p_motivo: cancelMotivo || null,
+      p_no_show: cancelNoShow,
+    });
     setCancelling(false);
     if (error) {
-      setCancelError("Não foi possível cancelar. Tente novamente.");
+      setCancelError(error.message || "Não foi possível cancelar. Tente novamente.");
       return;
     }
     onDeleted();
@@ -133,28 +143,66 @@ export default function EditarEventoModal({
 
           {cancelError && <p className="mb-3 text-sm text-red-600 dark:text-red-400">{cancelError}</p>}
 
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="flex-1 rounded-xl border border-neutral-300 py-2.5 text-sm font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
-            >
-              Fechar
-            </button>
-            <button
-              onClick={() => setShowFinalize(true)}
-              className="flex-1 rounded-xl bg-brand-gradient py-2.5 text-sm font-medium text-white shadow-glow-teal transition hover:brightness-110 active:scale-[0.98]"
-            >
-              {event.is_mentoria ? "Finalizar mentoria" : "Finalizar com disparos"}
-            </button>
-          </div>
+          {showCancelForm ? (
+            <div className="rounded-xl border border-red-200 p-3 dark:border-red-900/50">
+              <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                Motivo do cancelamento (opcional)
+              </label>
+              <textarea
+                value={cancelMotivo}
+                onChange={(e) => setCancelMotivo(e.target.value)}
+                rows={2}
+                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              />
+              <label className="mt-2 flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
+                <input
+                  type="checkbox"
+                  checked={cancelNoShow}
+                  onChange={(e) => setCancelNoShow(e.target.checked)}
+                />
+                O cliente não compareceu (no-show)
+              </label>
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => setShowCancelForm(false)}
+                  className="flex-1 rounded-xl border border-neutral-300 py-2 text-xs font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
+                >
+                  Voltar
+                </button>
+                <button
+                  onClick={handleCancelReservation}
+                  disabled={cancelling}
+                  className="flex-1 rounded-xl bg-red-600 py-2 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {cancelling ? "Cancelando..." : "Confirmar cancelamento"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-2">
+                <button
+                  onClick={onClose}
+                  className="flex-1 rounded-xl border border-neutral-300 py-2.5 text-sm font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
+                >
+                  Fechar
+                </button>
+                <button
+                  onClick={() => setShowFinalize(true)}
+                  className="flex-1 rounded-xl bg-brand-gradient py-2.5 text-sm font-medium text-white shadow-glow-teal transition hover:brightness-110 active:scale-[0.98]"
+                >
+                  {event.is_mentoria ? "Finalizar mentoria" : "Finalizar com disparos"}
+                </button>
+              </div>
 
-          <button
-            onClick={handleCancelReservation}
-            disabled={cancelling}
-            className="mt-3 w-full rounded-xl border border-red-200 py-2.5 text-sm font-medium text-red-600 disabled:opacity-60 dark:border-red-900/50 dark:text-red-400"
-          >
-            {cancelling ? "Cancelando..." : "Cancelar reserva"}
-          </button>
+              <button
+                onClick={() => setShowCancelForm(true)}
+                className="mt-3 w-full rounded-xl border border-red-200 py-2.5 text-sm font-medium text-red-600 dark:border-red-900/50 dark:text-red-400"
+              >
+                Cancelar reserva
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
