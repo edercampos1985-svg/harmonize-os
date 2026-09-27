@@ -221,9 +221,18 @@ create table public.equipments (
   id uuid primary key default gen_random_uuid(),
   code equipment_code_type not null unique,
   name text not null,
-  status text not null default 'ativo',
+  status text not null default 'ativo' check (status in ('ativo', 'manutencao')),
+  -- Leva T: motivo e desde-quando da manutenção, escritos só por
+  -- definir_status_equipamento. Nulos quando status = ativo.
+  status_motivo text,
+  status_desde timestamptz,
   created_at timestamptz not null default now()
 );
+
+comment on column public.equipments.status_motivo is
+  'Motivo da manutenção, preenchido por definir_status_equipamento (leva T). Null quando status = ativo.';
+comment on column public.equipments.status_desde is
+  'Quando o status mudou pela última vez (leva T).';
 
 insert into equipments (code, name) values
   ('hipro_1', 'HIPRO 1'),
@@ -491,14 +500,24 @@ set search_path = public
 as $$
 declare
   v_equipment_code equipment_code_type;
+  v_equipment_status text;
 begin
   if new.event_type in ('hipro_1', 'hipro_2') then
     if new.equipment_id is null then
       raise exception 'Evento do tipo % precisa de um equipamento vinculado.', new.event_type;
     end if;
-    select code into v_equipment_code from equipments where id = new.equipment_id;
+    select code, status into v_equipment_code, v_equipment_status from equipments where id = new.equipment_id;
     if v_equipment_code::text is distinct from new.event_type::text then
       raise exception 'Evento do tipo % não pode apontar para o equipamento %.', new.event_type, v_equipment_code;
+    end if;
+    -- Leva T: só bloqueia quando o equipamento está de fato mudando
+    -- (reserva nova, ou troca de equipamento numa locação existente).
+    -- old é nulo num insert, então "is distinct from" já dá certo nos
+    -- dois casos sem precisar checar tg_op à parte.
+    if v_equipment_status = 'manutencao'
+       and new.status <> 'cancelada'
+       and new.equipment_id is distinct from old.equipment_id then
+      raise exception 'Este equipamento está em manutenção no momento. Não é possível reservar ou mudar para ele até o status voltar a ativo.';
     end if;
   elsif new.equipment_id is not null then
     raise exception 'Evento do tipo % não pode ter equipamento vinculado.', new.event_type;
@@ -587,7 +606,8 @@ create table public.movimentacoes (
     'realizado', 'realizacao_desfeita',
     'pago', 'pagamento_desfeito',
     'taxa_paga', 'taxa_perdida', 'taxa_isenta', 'taxa_pendente',
-    'pedido_confirmacao_enviado'
+    'pedido_confirmacao_enviado',
+    'manutencao_iniciada', 'manutencao_finalizada'
   )),
   entidade text not null,
   entidade_id uuid,
@@ -1826,6 +1846,7 @@ as $$
 declare
   v_rental_id uuid;
   v_equipment_id uuid;
+  v_equipment_status text;
   v_data date;
   v_ocupante text;
   v_taxa text;
@@ -1845,6 +1866,13 @@ begin
   end if;
 
   if v_equipment_id is not null then
+    -- Leva T: o equipamento podia estar ativo quando foi cancelado e
+    -- ter ido para manutenção depois — não deixa reativar nesse caso.
+    select status into v_equipment_status from equipments where id = v_equipment_id;
+    if v_equipment_status = 'manutencao' then
+      raise exception 'Não dá para reativar: o equipamento está em manutenção no momento.';
+    end if;
+
     select coalesce(c.name, ev.title) into v_ocupante
       from calendar_events ev
       left join clients c on c.id = ev.client_id
@@ -1908,6 +1936,57 @@ end;
 $$;
 
 grant execute on function public.reativar_agendamento to authenticated;
+
+-- Leva T (E3): troca o status de um equipamento (ativo/manutencao) e
+-- registra em movimentacoes. É a única função que escreve em
+-- equipments.status — sem ela, não havia nenhuma UI para mudar esse
+-- valor, e a manutenção nunca bloqueava nada de verdade.
+create or replace function public.definir_status_equipamento(
+  p_equipment_id uuid,
+  p_status text,
+  p_motivo text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_nome text;
+  v_status_atual text;
+begin
+  if not has_module_permission('agenda') then
+    raise exception 'Sem permissão para alterar o status de equipamentos.';
+  end if;
+
+  if p_status not in ('ativo', 'manutencao') then
+    raise exception 'Status inválido: %. Use ''ativo'' ou ''manutencao''.', p_status;
+  end if;
+
+  select name, status into v_nome, v_status_atual from equipments where id = p_equipment_id;
+  if v_nome is null then
+    raise exception 'Equipamento não encontrado (id %).', p_equipment_id;
+  end if;
+
+  if v_status_atual = p_status then
+    return;
+  end if;
+
+  update equipments
+     set status = p_status,
+         status_motivo = case when p_status = 'manutencao' then nullif(trim(p_motivo), '') else null end,
+         status_desde = now()
+   where id = p_equipment_id;
+
+  perform public.registrar_movimentacao(
+    case p_status when 'manutencao' then 'manutencao_iniciada' else 'manutencao_finalizada' end,
+    'equipments', p_equipment_id, 'Equipamento ' || v_nome,
+    jsonb_build_object('motivo', coalesce(nullif(trim(p_motivo), ''), 'não informado'))
+  );
+end;
+$$;
+
+grant execute on function public.definir_status_equipamento to authenticated;
 
 -- Agendamentos de um cliente, para a ficha do lead: tudo que a tela
 -- precisa para desenhar os botões, numa função só.
