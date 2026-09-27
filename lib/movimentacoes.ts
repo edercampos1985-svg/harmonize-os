@@ -81,11 +81,17 @@ export function descreverDetalhes(m: Movimentacao): string | null {
   if (typeof d.acao_detalhada === "string") {
     return d.acao_detalhada;
   }
-  // Leva T: motivo de manutenção do equipamento — jsonb só com essa
-  // chave, então não colide com os outros formatos acima (que sempre
-  // têm mais de um campo).
-  if (typeof d.motivo === "string" && Object.keys(d).length === 1) {
-    return d.motivo === "não informado" ? null : `Motivo: ${d.motivo}`;
+  // Leva T/U: motivo de manutenção do equipamento, com previsão de
+  // retorno opcional (leva U). Só essas duas chaves, então não colide
+  // com os outros formatos acima.
+  if (
+    typeof d.motivo === "string" &&
+    (Object.keys(d).length === 1 || (Object.keys(d).length === 2 && typeof d.previsto_fim === "string"))
+  ) {
+    const partes: string[] = [];
+    if (d.motivo !== "não informado") partes.push(`Motivo: ${d.motivo}`);
+    if (typeof d.previsto_fim === "string") partes.push(`Previsão de volta: ${d.previsto_fim}`);
+    return partes.length > 0 ? partes.join(" · ") : null;
   }
   return null;
 }
