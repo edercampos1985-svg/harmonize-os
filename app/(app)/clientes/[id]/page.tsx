@@ -44,10 +44,32 @@ export default async function ClienteDetailPage({ params }: { params: { id: stri
     equipments: Array.isArray(r.equipments) ? (r.equipments[0] ?? null) : (r.equipments ?? null),
   }));
 
+  // Leva Y: pré-reservas ("Agendar sem disparos") deste cliente que ainda
+  // não viraram locação — ficam numa seção separada, "Próximos
+  // agendamentos", porque é justamente aí que o contrato precisa poder
+  // ser gerado: antes do procedimento, quando ainda não existe linha
+  // nenhuma em `rentals`.
+  const { data: preReservas } = await supabase
+    .from("calendar_events")
+    .select("id, date_start, date_end, equipment_id, equipments(name, serial_number, anvisa_registro)")
+    .eq("client_id", params.id)
+    .eq("status", "pre_reserva")
+    .is("rental_id", null)
+    .order("date_start", { ascending: true });
+
+  const normalizedPreReservas = (preReservas ?? []).map((r: any) => ({
+    id: r.id,
+    event_date: r.date_start,
+    event_date_end: r.date_end,
+    equipment_id: r.equipment_id,
+    equipments: Array.isArray(r.equipments) ? (r.equipments[0] ?? null) : (r.equipments ?? null),
+  }));
+
   return (
     <ClienteDetailClient
       client={client}
       rentals={normalizedRentals}
+      preReservas={normalizedPreReservas}
       billableCount={billableCount}
       billableTotal={billableTotal}
       equipments={equipments ?? []}
