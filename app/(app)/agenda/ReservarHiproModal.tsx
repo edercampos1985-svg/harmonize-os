@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ClientPicker, { type ClientOption } from "@/components/ClientPicker";
 
@@ -44,20 +44,53 @@ export default function ReservarHiproModal({
 
   const isFixedClient = !!fixedClientId;
   const clientId = isFixedClient ? fixedClientId! : selectedClientId;
+  const clientName = isFixedClient ? fixedClientName ?? "" : localClients.find((c) => c.id === clientId)?.name ?? "";
+
+  // E7: aviso (não bloqueia) quando o mesmo cliente já tem outro HIPRO
+  // reservado no mesmo dia — cenário mais provável de ser engano de
+  // digitação do que um caso real de dois procedimentos no mesmo dia.
+  const [outroEquipAviso, setOutroEquipAviso] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    setOutroEquipAviso(null);
+    if (!clientId || !equipmentId || !eventDate) return;
+    supabase
+      .from("calendar_events")
+      .select("equipment_id, equipments(name)")
+      .eq("client_id", clientId)
+      .eq("date_start", eventDate)
+      .neq("status", "cancelada")
+      .not("equipment_id", "is", null)
+      .neq("equipment_id", equipmentId)
+      .limit(1)
+      .then(({ data }) => {
+        if (!active) return;
+        const outro = data?.[0] as any;
+        if (!outro) return;
+        const outroNome = (Array.isArray(outro.equipments) ? outro.equipments[0] : outro.equipments)?.name ?? "outro equipamento";
+        setOutroEquipAviso(`⚠️ ${clientName || "Este cliente"} já tem uma reserva no ${outroNome} neste mesmo dia. Confirme se não é engano antes de reservar também aqui.`);
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, equipmentId, eventDate]);
 
   async function handleSave() {
     if (!clientId || !equipmentId || !eventDate) {
       setError("Preencha cliente, equipamento e data.");
       return;
     }
-    if (!window.confirm("Reservar este equipamento para essa data? A contagem de disparos e o valor entram depois, quando o procedimento acontecer.")) {
+    const confirmMsg = outroEquipAviso
+      ? `${outroEquipAviso}\n\nReservar mesmo assim?`
+      : "Reservar este equipamento para essa data? A contagem de disparos e o valor entram depois, quando o procedimento acontecer.";
+    if (!window.confirm(confirmMsg)) {
       return;
     }
     setSaving(true);
     setError(null);
 
     const equipment = equipments.find((e) => e.id === equipmentId);
-    const clientName = isFixedClient ? fixedClientName ?? "" : localClients.find((c) => c.id === clientId)?.name ?? "";
 
     const { error: insertError } = await supabase.from("calendar_events").insert({
       event_type: equipment?.code ?? "outros",
@@ -161,6 +194,12 @@ export default function ReservarHiproModal({
             Esta reserva é para mentoria
           </label>
         </div>
+
+        {outroEquipAviso && (
+          <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-400">
+            {outroEquipAviso}
+          </p>
+        )}
 
         {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
