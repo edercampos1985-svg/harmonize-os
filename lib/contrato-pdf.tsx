@@ -2,11 +2,18 @@
 // (nenhum arquivo fica salvo no servidor — só o retrato dos dados usados,
 // em contratos_emitidos.dados). Texto e estrutura replicam fielmente o
 // modelo real usado pela operação fora do sistema (contrato de
-// 08/06/2026, INSTITUTO ISABEL ALBUQUERQUE), com uma única mudança
-// deliberada: a 2ª cláusula (valor) monta a tabela de faixas a partir da
-// precificação configurada em Configurações no momento da geração, em
-// vez de repetir os números daquele contrato específico — assim o texto
-// gerado sempre bate com o que o sistema realmente cobra.
+// 08/06/2026, INSTITUTO ISABEL ALBUQUERQUE), com duas mudanças
+// deliberadas: (1) a 2ª cláusula (valor) monta a tabela de faixas a
+// partir da precificação configurada em Configurações no momento da
+// geração, em vez de repetir os números daquele contrato específico —
+// assim o texto gerado sempre bate com o que o sistema realmente cobra;
+// (2) o fechamento dessa cláusula nunca afirma que os disparos "já
+// foram registrados" ou que um valor "já foi apurado" — o contrato é
+// sempre assinado ANTES da locação acontecer (leva Y), nunca depois,
+// então shots/calculated_value são opcionais: quando a origem é uma
+// locação já lançada (mesmo que para data futura), viram uma estimativa
+// sujeita a ajuste; quando é uma pré-reserva sem disparos definidos
+// ainda, o texto descreve só a tabela de tarifas.
 import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
 
 export interface ContratoDados {
@@ -28,8 +35,13 @@ export interface ContratoDados {
   locacao: {
     event_date: string;
     event_date_end: string | null;
-    shots: number;
-    calculated_value: number;
+    // Nulos quando o contrato nasce de uma pré-reserva (ainda sem
+    // disparos combinados) — o contrato é sempre assinado antes do
+    // procedimento, então nunca dá para afirmar um total "já apurado".
+    // Quando vêm de uma locação já lançada, são tratados como estimativa
+    // sujeita a ajuste pela contagem real do equipamento, não como fato.
+    shots: number | null;
+    calculated_value: number | null;
     payment_method: string;
   };
   // Retrato da precificação vigente em Configurações no momento desta
@@ -141,6 +153,16 @@ function InfoTable({ rows }: { rows: [string, string][] }) {
 
 function ContratoDocument({ dados }: { dados: ContratoDados }) {
   const { flatPackageLimit, flatPackageValue, tier2Limit, tier2Rate, tier3Rate } = dados.precificacao;
+  const paymentLabel = PAYMENT_LABELS[dados.locacao.payment_method] ?? dados.locacao.payment_method;
+
+  // Fechamento da cláusula de valor: nunca no passado ("foi apurado"),
+  // porque o contrato é sempre assinado antes da locação acontecer. Com
+  // disparos/valor já combinados (locação já lançada), vira estimativa
+  // sujeita a ajuste; sem eles (pré-reserva), descreve só a tabela.
+  const temEstimativa = dados.locacao.shots != null && dados.locacao.calculated_value != null;
+  const paragrafoValorFinal = temEstimativa
+    ? `O valor final é apurado com base no contador do equipamento ao término do procedimento, sendo o comprovante de pagamento condição para a retirada do equipamento. Para esta locação, estima-se ${dados.locacao.shots!.toLocaleString("pt-BR")} disparo(s), com valor estimado de ${formatCurrencyBR(Number(dados.locacao.calculated_value))}, sujeito a ajuste conforme a contagem final do equipamento. O pagamento será realizado via ${paymentLabel}.`
+    : `O valor final é apurado com base no contador do equipamento ao término do procedimento, sendo o comprovante de pagamento condição para a retirada do equipamento. A quantidade de disparos desta locação ainda será definida no dia do procedimento, e o valor total será calculado conforme a tabela acima. O pagamento será realizado via ${paymentLabel}.`;
 
   return (
     <Document>
@@ -211,13 +233,7 @@ function ContratoDocument({ dados }: { dados: ContratoDados }) {
           {" "}acrescido de R$ {formatRatePerShot(tier3Rate)} por disparo sobre todo o excedente acima de{" "}
           {flatPackageLimit.toLocaleString("pt-BR")} disparos.
         </Text>
-        <Text style={styles.paragraph}>
-          O valor final é apurado com base no contador do equipamento no momento da devolução, sendo o comprovante de
-          pagamento condição para retirada do equipamento. Para esta locação, com{" "}
-          {dados.locacao.shots.toLocaleString("pt-BR")} disparos registrados e pagamento em{" "}
-          {PAYMENT_LABELS[dados.locacao.payment_method] ?? dados.locacao.payment_method}, o valor total apurado foi de{" "}
-          {formatCurrencyBR(Number(dados.locacao.calculated_value))}.
-        </Text>
+        <Text style={styles.paragraph}>{paragrafoValorFinal}</Text>
 
         <Text style={styles.clauseTitle}>3ª CLÁUSULA. DAS OBRIGAÇÕES DO CONTRATANTE</Text>
         <Text style={styles.paragraph}>
