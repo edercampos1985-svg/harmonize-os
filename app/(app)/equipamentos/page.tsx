@@ -11,9 +11,15 @@ export default async function EquipamentosPage() {
   const supabase = createClient();
   const today = new Date().toISOString().slice(0, 10);
 
+  // Leva U: não há job agendado neste projeto, então a atualização de
+  // previsões vencidas acontece "sob demanda" aqui, antes de montar a
+  // lista — garante que a tela nunca mostre um equipamento em
+  // manutenção cuja previsão de retorno já passou.
+  await supabase.rpc("aplicar_previsoes_manutencao_vencidas");
+
   const { data: equipments } = await supabase
     .from("equipments")
-    .select("id, code, name, status, status_motivo, status_desde")
+    .select("id, code, name, status, status_motivo, status_desde, status_previsto_fim")
     .order("code");
 
   // Lê da view rentals_contabilizaveis, não da tabela rentals: a receita
@@ -62,6 +68,7 @@ export default async function EquipamentosPage() {
                     status={eq.status}
                     statusMotivo={eq.status_motivo ?? null}
                     statusDesde={eq.status_desde ?? null}
+                    statusPrevistoFim={eq.status_previsto_fim ?? null}
                   />
                 </div>
                 <div>
