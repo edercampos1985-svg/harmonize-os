@@ -34,14 +34,14 @@ import AvailabilityImageModal from "@/components/AvailabilityImageModal";
 // o rosa que "Outro" usava antes — foi para o azul que sobrou do HIPRO 2.
 // Mentoria ganhou amarelo, uma cor que não existia ainda na paleta.
 // "outros" usava bg-brand-blue (#7EC8E3), parecido demais com o teal do
-// HIPRO 1 (#3DBFB8) num pontinho pequeno — trocado para o lilás da
-// paleta (brand-lilac), que já existe na identidade visual mas não era
-// usado em nenhum evento da Agenda, e fica bem distinto dos outros três.
+// HIPRO 1 (#3DBFB8) num pontinho pequeno — tentou-se o lilás da paleta
+// (brand-lilac) antes, mas também confundiu na prática, então "outros"
+// ficou em vermelho (red-500), que não é usado por nenhum outro tipo.
 const EVENT_META: Record<string, { label: string; dot: string; hex: string }> = {
   hipro_1: { label: "HIPRO 1", dot: "bg-brand-teal", hex: "#3DBFB8" },
   hipro_2: { label: "HIPRO 2", dot: "bg-brand-pink", hex: "#E8789A" },
   mentoria: { label: "Mentoria", dot: "bg-yellow-400", hex: "#FACC15" },
-  outros: { label: "Outro", dot: "bg-brand-lilac", hex: "#B8A0D0" },
+  outros: { label: "Outro", dot: "bg-red-500", hex: "#ef4444" },
 };
 
 const WEEKDAY_LABELS = ["D", "S", "T", "Q", "Q", "S", "S"];
@@ -581,29 +581,48 @@ export default function AgendaClient({
             const inMonth = isSameMonth(day, currentMonth);
             const selected = key === selectedDate;
             const today = isToday(day);
+            const hasEvents = dayEvents.length > 0;
+            // Cor (ou conic-gradient, quando há mais de um tipo no dia) do
+            // anel — o mesmo valor que antes virava o pontinho embaixo do
+            // número agora contorna o número, no estilo do calendário do
+            // iOS: o dia continua legível e a cor do evento fica em volta
+            // dele, não escondida num pontinho pequeno.
+            const anelCor = hasEvents ? buildDayIndicator(dayEvents) : null;
 
-            return (
+            const numero = (
               <button
-                key={key}
                 onClick={() => setSelectedDate(key)}
-                className={`relative mx-auto flex h-10 w-10 flex-col items-center justify-center rounded-full text-xs transition ${
+                className={`flex h-full w-full items-center justify-center rounded-full text-xs transition ${
                   selected
                     ? "bg-brand-gradient font-semibold text-white shadow-glow-teal"
-                    : today
+                    : today && !hasEvents
                     ? "border border-brand-teal text-brand-teal"
+                    : today
+                    ? "font-semibold text-brand-teal"
                     : inMonth
                     ? "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
                     : "text-neutral-300 dark:text-neutral-700"
                 }`}
               >
-                <span>{day.getDate()}</span>
-                {dayEvents.length > 0 && (
-                  <span
-                    className="mt-0.5 h-1.5 w-1.5 rounded-full"
-                    style={{ background: selected ? "#ffffff" : buildDayIndicator(dayEvents) }}
-                  />
-                )}
+                {day.getDate()}
               </button>
+            );
+
+            return (
+              <div key={key} className="mx-auto flex h-10 w-10 items-center justify-center">
+                {hasEvents && !selected ? (
+                  <div
+                    className="flex h-9 w-9 items-center justify-center rounded-full p-[2px]"
+                    style={{ background: anelCor ?? undefined }}
+                  >
+                    <div className="flex h-full w-full items-center justify-center rounded-full bg-white dark:bg-neutral-900">
+                      {numero}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex h-9 w-9 items-center justify-center">{numero}</div>
+                )}
+              </div>
             );
           })}
         </div>
