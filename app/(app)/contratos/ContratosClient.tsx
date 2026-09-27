@@ -10,7 +10,11 @@ interface ContratoRow {
   gerado_em: string;
   dados: ContratoDados;
   client_id: string;
-  rental_id: string;
+  // Leva Y: mutuamente exclusivos — vem de uma locação já lançada
+  // (rental_id) ou de uma pré-reserva assinada antes do procedimento
+  // (reservation_id), nunca dos dois.
+  rental_id: string | null;
+  reservation_id: string | null;
   clients?: { name: string } | null;
 }
 
@@ -20,6 +24,13 @@ function formatPeriodo(dados: ContratoDados): string {
     return `${formatDate(event_date)} a ${formatDate(event_date_end)}`;
   }
   return formatDate(event_date);
+}
+
+// Leva Y: contrato gerado a partir de uma pré-reserva ainda não tem
+// valor fechado — mostrar "A apurar" em vez de tentar formatar null como
+// moeda (Number(null) vira 0, o que mentiria um valor que não existe).
+function formatValorOuApurar(dados: ContratoDados): string {
+  return dados.locacao.calculated_value != null ? formatCurrency(Number(dados.locacao.calculated_value)) : "A apurar";
 }
 
 export default function ContratosClient({
@@ -90,7 +101,7 @@ export default function ContratosClient({
               <span className="text-xs text-neutral-400">{formatDate(c.gerado_em.slice(0, 10))}</span>
             </div>
             <div className="mt-2 flex items-center justify-between">
-              <span className="font-medium text-brand-teal">{formatCurrency(Number(c.dados.locacao.calculated_value))}</span>
+              <span className="font-medium text-brand-teal">{formatValorOuApurar(c.dados)}</span>
               <button
                 onClick={() => handleBaixarNovamente(c)}
                 disabled={baixandoId === c.id}
@@ -133,7 +144,7 @@ export default function ContratosClient({
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-neutral-600 dark:text-neutral-400">{formatPeriodo(c.dados)}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-right font-medium text-brand-teal">
-                  {formatCurrency(Number(c.dados.locacao.calculated_value))}
+                  {formatValorOuApurar(c.dados)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right">
                   <button
