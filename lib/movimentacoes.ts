@@ -31,6 +31,8 @@ export const ACAO_META: Record<string, { label: string; classe: string }> = {
   taxa_perdida: { label: "Taxa perdida", classe: "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300" },
   taxa_isenta: { label: "Taxa isentada", classe: "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300" },
   pedido_confirmacao_enviado: { label: "Pedido de confirmação enviado", classe: "bg-brand-blue/10 text-brand-blue" },
+  manutencao_iniciada: { label: "Manutenção iniciada", classe: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" },
+  manutencao_finalizada: { label: "Manutenção finalizada", classe: "bg-brand-teal/10 text-brand-teal" },
 };
 
 export const ENTIDADE_LABEL: Record<string, string> = {
@@ -40,6 +42,7 @@ export const ENTIDADE_LABEL: Record<string, string> = {
   clients: "Cliente",
   tasks: "Tarefa",
   mentoring_events: "Mentoria",
+  equipments: "Equipamento",
 };
 
 export function formatarDataHora(iso: string) {
@@ -77,6 +80,12 @@ export function descreverDetalhes(m: Movimentacao): string | null {
   }
   if (typeof d.acao_detalhada === "string") {
     return d.acao_detalhada;
+  }
+  // Leva T: motivo de manutenção do equipamento — jsonb só com essa
+  // chave, então não colide com os outros formatos acima (que sempre
+  // têm mais de um campo).
+  if (typeof d.motivo === "string" && Object.keys(d).length === 1) {
+    return d.motivo === "não informado" ? null : `Motivo: ${d.motivo}`;
   }
   return null;
 }
