@@ -3303,7 +3303,7 @@ grant execute on function public.update_rental(uuid, uuid, date, integer, numeri
 -- ------------------------------------------------------------
 create table public.contratos_emitidos (
   id uuid primary key default gen_random_uuid(),
-  rental_id uuid not null references public.rentals(id),
+  rental_id uuid references public.rentals(id),
   client_id uuid not null references public.clients(id),
   gerado_em timestamptz not null default now(),
   gerado_por uuid references public.profiles(id),
@@ -3333,9 +3333,57 @@ create trigger contratos_emitidos_apply_test_mode
   before insert on public.contratos_emitidos
   for each row execute function public.apply_test_mode();
 
+-- ------------------------------------------------------------
+-- leva Y: contrato assinado ANTES da locação, nunca depois
+--
+-- O rental_id acima só existe DEPOIS que a locação é lançada/finalizada
+-- (disparos já contados). Mas o contrato tem que poder ser gerado e
+-- assinado já na pré-reserva ("Agendar sem disparos", calendar_events
+-- com status pre_reserva), antes de qualquer disparo existir — por isso
+-- rental_id vira opcional e ganha um par, reservation_id, apontando pra
+-- calendar_events. Cada linha nasce de UM dos dois, nunca dos dois nem
+-- de nenhum (ver check abaixo).
+-- ------------------------------------------------------------
+alter table public.contratos_emitidos add column if not exists reservation_id uuid references public.calendar_events(id);
+
+create index if not exists contratos_emitidos_reservation_id_idx on public.contratos_emitidos(reservation_id);
+
+alter table public.contratos_emitidos drop constraint if exists contratos_emitidos_origem_check;
+alter table public.contratos_emitidos add constraint contratos_emitidos_origem_check
+  check (
+    (rental_id is not null and reservation_id is null)
+    or (rental_id is null and reservation_id is not null)
+  );
+
+comment on column public.contratos_emitidos.rental_id is
+  'Preenchido quando o contrato nasce de uma locação já lançada (disparos/valor já combinados, mesmo que para data futura). Mutuamente exclusivo com reservation_id (leva Y).';
+comment on column public.contratos_emitidos.reservation_id is
+  'Preenchido quando o contrato nasce de uma pré-reserva ainda sem disparos contados (calendar_events, status pre_reserva) — o caso normal, já que o contrato é sempre assinado antes do procedimento (leva Y). Mutuamente exclusivo com rental_id.';
+
+-- Assinatura muda (p_rental_id deixa de ser obrigatório e ganha o par
+-- p_reservation_id) — apaga todas as versões existentes antes de
+-- recriar, mesmo motivo/mesmo padrão já usado em create_rental/
+-- update_rental (leva W): create or replace não cobre mudança de lista
+-- de parâmetros, e um "drop function" com tipos fixos só cobre uma
+-- assinatura específica.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'registrar_contrato_emitido'
+  loop
+    execute format('drop function %s', r.sig);
+  end loop;
+end $$;
+
 create or replace function public.registrar_contrato_emitido(
-  p_rental_id uuid,
-  p_dados jsonb
+  p_dados jsonb,
+  p_rental_id uuid default null,
+  p_reservation_id uuid default null
 )
 returns uuid
 language plpgsql
@@ -3350,20 +3398,29 @@ begin
     raise exception 'Sem permissão para gerar contratos.';
   end if;
 
-  select client_id into v_client_id from rentals where id = p_rental_id;
-  if v_client_id is null then
-    raise exception 'Locação não encontrada (id %).', p_rental_id;
+  if p_rental_id is not null then
+    select client_id into v_client_id from rentals where id = p_rental_id;
+    if v_client_id is null then
+      raise exception 'Locação não encontrada (id %).', p_rental_id;
+    end if;
+  elsif p_reservation_id is not null then
+    select client_id into v_client_id from calendar_events where id = p_reservation_id;
+    if v_client_id is null then
+      raise exception 'Agendamento não encontrado (id %).', p_reservation_id;
+    end if;
+  else
+    raise exception 'Informe a locação ou a pré-reserva de origem do contrato.';
   end if;
 
-  insert into contratos_emitidos (rental_id, client_id, gerado_por, dados)
-  values (p_rental_id, v_client_id, auth.uid(), p_dados)
+  insert into contratos_emitidos (rental_id, reservation_id, client_id, gerado_por, dados)
+  values (p_rental_id, p_reservation_id, v_client_id, auth.uid(), p_dados)
   returning id into v_id;
 
   return v_id;
 end;
 $$;
 
-grant execute on function public.registrar_contrato_emitido(uuid, jsonb) to authenticated;
+grant execute on function public.registrar_contrato_emitido(jsonb, uuid, uuid) to authenticated;
 
 -- ------------------------------------------------------------
 -- leva P.2 — corrigir o cliente de uma locação já lançada
