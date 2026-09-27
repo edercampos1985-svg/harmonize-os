@@ -3499,6 +3499,79 @@ $$;
 
 grant execute on function public.register_contact_attempt to authenticated;
 
+-- Leva V: desfazer a conclusão de uma tarefa marcada por engano. Tarefa
+-- manual não tem efeito colateral, mas tarefa de funil pode ter criado
+-- a próxima tarefa de follow-up (ou movido o cliente pra 'nutricao') —
+-- só desfaz se a tarefa seguinte ainda estiver intocada, removendo-a e
+-- recolocando a tag "Follow-up N" removida na conclusão. Não reverte a
+-- mudança de estágio para 'nutricao' (não guardamos o estágio anterior).
+create or replace function public.desfazer_conclusao_tarefa(p_task_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_client_id uuid;
+  v_type text;
+  v_follow_up_number integer;
+  v_status text;
+  v_next_task_id uuid;
+  v_next_task_status text;
+  v_tag_id uuid;
+begin
+  if not has_module_permission('clientes') then
+    raise exception 'Sem permissão para alterar tarefas.';
+  end if;
+
+  select client_id, type, follow_up_number, status
+    into v_client_id, v_type, v_follow_up_number, v_status
+    from tasks where id = p_task_id;
+
+  if not found then
+    raise exception 'Tarefa não encontrada.';
+  end if;
+
+  if v_status <> 'concluida' then
+    raise exception 'Esta tarefa não está concluída.';
+  end if;
+
+  if v_type in ('contato_inicial', 'followup') and v_client_id is not null then
+    select id, status into v_next_task_id, v_next_task_status
+      from tasks
+     where client_id = v_client_id
+       and type = 'followup'
+       and follow_up_number = coalesce(v_follow_up_number, 0) + 1
+     order by created_at desc
+     limit 1;
+
+    if v_next_task_id is not null then
+      if v_next_task_status <> 'pendente' then
+        raise exception 'Não dá para desfazer: já existe uma tarefa de follow-up seguinte que já foi mexida. Desfaça essa primeiro.';
+      end if;
+      delete from tasks where id = v_next_task_id;
+    end if;
+
+    if v_follow_up_number is not null then
+      select id into v_tag_id from tags where name = 'Follow-up ' || v_follow_up_number;
+      if v_tag_id is not null then
+        insert into client_tags (client_id, tag_id) values (v_client_id, v_tag_id)
+        on conflict do nothing;
+      end if;
+    end if;
+  end if;
+
+  update tasks set status = 'pendente', completed_at = null where id = p_task_id;
+
+  perform public.registrar_movimentacao(
+    'editado', 'tasks', p_task_id, public.descrever_registro('tasks', p_task_id),
+    jsonb_build_object('acao_detalhada', 'Conclusão da tarefa desfeita (reaberta por engano)')
+  );
+end;
+$$;
+
+grant execute on function public.desfazer_conclusao_tarefa to authenticated;
+
 -- Reagendar um evento na Agenda aplica a etiqueta "Reagendamento" no
 -- cliente (cobre edição direta na Agenda e locações editadas via
 -- update_rental, já que as duas gravam em calendar_events).
