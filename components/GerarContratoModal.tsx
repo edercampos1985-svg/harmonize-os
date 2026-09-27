@@ -1,0 +1,205 @@
+"use client";
+
+import { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { formatCurrency, formatDate } from "@/lib/format";
+import type { ContratoDados } from "@/lib/contrato-pdf";
+
+const PAYMENT_LABELS: Record<string, string> = {
+  pix: "PIX",
+  dinheiro: "Dinheiro",
+  debito: "Débito",
+  credito: "Crédito",
+  transferencia: "Transferência",
+  outros: "Outros",
+};
+
+function formatPeriodo(eventDate: string, eventDateEnd?: string | null): string {
+  if (eventDateEnd && eventDateEnd !== eventDate) {
+    return `${formatDate(eventDate)} a ${formatDate(eventDateEnd)}`;
+  }
+  return formatDate(eventDate);
+}
+
+interface RentalParaContrato {
+  id: string;
+  event_date: string;
+  event_date_end?: string | null;
+  shots: number;
+  calculated_value: number;
+  payment_method: string;
+  equipment_id: string;
+  equipments?: { name: string; serial_number?: string | null; anvisa_registro?: string | null } | null;
+}
+
+interface ClienteParaContrato {
+  id: string;
+  name: string;
+  document?: string | null;
+  address?: string | null;
+  contrato_nome?: string | null;
+  contrato_endereco?: string | null;
+}
+
+export default function GerarContratoModal({
+  rental,
+  client,
+  onClose,
+}: {
+  rental: RentalParaContrato;
+  client: ClienteParaContrato;
+  onClose: () => void;
+}) {
+  const supabase = createClient();
+  // Padrão: dado alternativo fixo do cadastro (contrato_nome/contrato_endereco),
+  // senão o dado normal do cliente. Sempre editável só para esta geração,
+  // sem alterar o cadastro (leva X — "os dois": padrão fixo + ajuste pontual).
+  const [nome, setNome] = useState(client.contrato_nome || client.name);
+  const [documento, setDocumento] = useState(client.document ?? "");
+  const [endereco, setEndereco] = useState(client.contrato_endereco || client.address || "");
+  const [gerando, setGerando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const equipamentoNome = rental.equipments?.name ?? "-";
+
+  async function handleGerar() {
+    if (!nome.trim()) {
+      setError("Informe o nome/razão social do contratante.");
+      return;
+    }
+    if (!documento.trim()) {
+      setError("Informe o CPF/CNPJ do contratante.");
+      return;
+    }
+    setError(null);
+    setGerando(true);
+
+    const dados: ContratoDados = {
+      contratante: {
+        nome: nome.trim(),
+        documento: documento.trim(),
+        endereco: endereco.trim() || null,
+      },
+      equipamento: {
+        nome: equipamentoNome,
+        serial_number: rental.equipments?.serial_number ?? null,
+        anvisa_registro: rental.equipments?.anvisa_registro ?? null,
+      },
+      locacao: {
+        event_date: rental.event_date,
+        event_date_end: rental.event_date_end ?? null,
+        shots: rental.shots,
+        calculated_value: Number(rental.calculated_value),
+        payment_method: rental.payment_method,
+      },
+      gerado_em: new Date().toISOString(),
+    };
+
+    // Registra ANTES de gerar o PDF: garante que o "controle dos
+    // emitidos" reflete a intenção mesmo que o usuário cancele a caixa de
+    // salvar do navegador depois — o registro é sobre o contrato ter sido
+    // gerado, não sobre onde o arquivo baixado parou.
+    const { error: rpcError } = await supabase.rpc("registrar_contrato_emitido", {
+      p_rental_id: rental.id,
+      p_dados: dados,
+    });
+
+    if (rpcError) {
+      setGerando(false);
+      setError("Não foi possível registrar a emissão. Tente novamente.");
+      return;
+    }
+
+    try {
+      // Import dinâmico: @react-pdf/renderer é pesado, e a maioria das
+      // visitas ao perfil do cliente nunca gera um contrato — carregar só
+      // aqui, no momento do clique, evita inflar o carregamento inicial
+      // da página inteira.
+      const { gerarContratoPdfBlob, baixarPdfBlob, nomeArquivoContrato } = await import("@/lib/contrato-pdf");
+      const blob = await gerarContratoPdfBlob(dados);
+      baixarPdfBlob(blob, nomeArquivoContrato(dados));
+      onClose();
+    } catch {
+      setError("O contrato foi registrado, mas houve um erro ao montar o PDF. Tente gerar de novo pelo controle de Contratos.");
+    } finally {
+      setGerando(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-20 flex items-end justify-center bg-black/40 sm:items-center" onClick={onClose}>
+      <div
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white/90 p-6 shadow-2xl backdrop-blur-2xl dark:bg-neutral-900/85 sm:rounded-3xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="mb-1 text-lg font-semibold text-neutral-900 dark:text-neutral-100">Gerar contrato</h2>
+        <p className="mb-4 text-xs text-neutral-500 dark:text-neutral-400">
+          Confira os dados de quem vai constar no contrato e na nota fiscal. Podem ser diferentes do cadastro do cliente —
+          o que você ajustar aqui vale só para este contrato.
+        </p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+              Nome / Razão social
+            </label>
+            <input
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">CPF/CNPJ</label>
+            <input
+              value={documento}
+              onChange={(e) => setDocumento(e.target.value)}
+              placeholder="000.000.000-00 ou 00.000.000/0000-00"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+              Endereço (opcional)
+            </label>
+            <input
+              value={endereco}
+              onChange={(e) => setEndereco(e.target.value)}
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+            />
+          </div>
+
+          <div className="rounded-xl border border-neutral-200 p-3 text-xs text-neutral-600 dark:border-neutral-700 dark:text-neutral-400">
+            <p className="mb-1.5 font-medium text-neutral-700 dark:text-neutral-300">Dados da locação (não editáveis aqui)</p>
+            <p>Equipamento: {equipamentoNome}</p>
+            <p>Período: {formatPeriodo(rental.event_date, rental.event_date_end)}</p>
+            <p>Disparos: {rental.shots.toLocaleString("pt-BR")}</p>
+            <p>Valor: {formatCurrency(Number(rental.calculated_value))}</p>
+            <p>Pagamento: {PAYMENT_LABELS[rental.payment_method] ?? rental.payment_method}</p>
+            <p className="mt-1.5 text-[11px] text-neutral-400">
+              Para mudar algo disto, edite a locação e gere o contrato de novo.
+            </p>
+          </div>
+        </div>
+
+        {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+        <div className="mt-5 flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 rounded-xl border border-neutral-300 py-2.5 text-sm font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleGerar}
+            disabled={gerando}
+            className="flex-1 rounded-xl bg-brand-gradient py-2.5 text-sm font-medium text-white shadow-glow-teal transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60 disabled:hover:brightness-100"
+          >
+            {gerando ? "Gerando..." : "Gerar PDF"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
