@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { formatCurrency, formatDate } from "@/lib/format";
 import EquipamentoStatusControl from "@/components/EquipamentoStatusControl";
+import EquipamentoInfoControl from "@/components/EquipamentoInfoControl";
 
 const EQUIPMENT_COLORS: Record<string, string> = {
   hipro_1: "bg-brand-teal",
@@ -19,7 +20,7 @@ export default async function EquipamentosPage() {
 
   const { data: equipments } = await supabase
     .from("equipments")
-    .select("id, code, name, status, status_motivo, status_desde, status_previsto_fim")
+    .select("id, code, name, status, status_motivo, status_desde, status_previsto_fim, serial_number, anvisa_registro")
     .order("code");
 
   // Lê da view rentals_contabilizaveis, não da tabela rentals: a receita
@@ -95,6 +96,14 @@ export default async function EquipamentosPage() {
                 <div>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400">Receita total</p>
                   <p className="mt-0.5 text-sm font-medium text-brand-teal">{formatCurrency(receitaTotal)}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">Número de série</p>
+                  <EquipamentoInfoControl
+                    equipmentId={eq.id}
+                    serialNumber={eq.serial_number ?? null}
+                    anvisaRegistro={eq.anvisa_registro ?? null}
+                  />
                 </div>
               </div>
             </div>
