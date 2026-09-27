@@ -17,6 +17,7 @@ import {
   BarChart3,
   History,
   Receipt,
+  FileText,
   Settings,
   LogOut,
   ChevronLeft,
@@ -33,6 +34,9 @@ const NAV_ITEMS = [
   // Histórico de locações realizadas: os FATOS. Fica ao lado de
   // Equipamentos porque a pergunta é a mesma família, "quanto rodamos".
   { href: "/locacoes", label: "Locações", icon: Receipt, module: "financeiro" },
+  // Controle dos contratos de locação já emitidos (leva X). Fica perto de
+  // Locações porque nasce de lá (um contrato é sempre de uma locação).
+  { href: "/contratos", label: "Contratos", icon: FileText, module: "agenda" },
   { href: "/equipamentos", label: "Equipamentos", icon: Package, module: "equipamentos" },
   { href: "/relatorios", label: "Relatórios", icon: BarChart3, module: "relatorios" },
   // Histórico de movimentações: fica no módulo de configurações porque é
