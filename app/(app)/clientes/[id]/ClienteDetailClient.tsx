@@ -7,7 +7,7 @@ import { FileText } from "lucide-react";
 import { formatCurrency, formatDate, buildMapsLink, buildWazeLink, buildWhatsAppLink } from "@/lib/format";
 import type { PricingConfig } from "@/lib/rental-pricing";
 import CalculadoraLocacaoModal from "@/components/CalculadoraLocacaoModal";
-import GerarContratoModal from "@/components/GerarContratoModal";
+import GerarContratoModal, { type OrigemContrato } from "@/components/GerarContratoModal";
 import EditarClienteModal from "./EditarClienteModal";
 import EditarLocacaoModal from "./EditarLocacaoModal";
 import ReservarHiproModal from "../../agenda/ReservarHiproModal";
@@ -63,10 +63,22 @@ interface EquipmentOption {
   name: string;
 }
 
-// Leva W: mostra o período completo quando a locação cobre mais de um dia
-// (event_date_end preenchido e diferente da data inicial); senão mostra só a
-// data única, igual sempre foi.
-function formatPeriodo(r: RentalRow): string {
+// Leva Y: pré-reserva ("Agendar sem disparos") ainda sem disparos/valor
+// combinados — mostrada numa seção separada, "Próximos agendamentos",
+// porque é aí que o contrato precisa poder ser gerado: antes do
+// procedimento, quando ainda não existe nenhuma linha em `rentals`.
+interface PreReservaRow {
+  id: string;
+  event_date: string;
+  event_date_end?: string | null;
+  equipment_id: string;
+  equipments?: { name: string; serial_number?: string | null; anvisa_registro?: string | null } | null;
+}
+
+// Leva W: mostra o período completo quando a locação (ou pré-reserva)
+// cobre mais de um dia (event_date_end preenchido e diferente da data
+// inicial); senão mostra só a data única, igual sempre foi.
+function formatPeriodo(r: { event_date: string; event_date_end?: string | null }): string {
   if (r.event_date_end && r.event_date_end !== r.event_date) {
     return `${formatDate(r.event_date)} a ${formatDate(r.event_date_end)}`;
   }
@@ -84,6 +96,7 @@ function openInNewTab(url: string) {
 export default function ClienteDetailClient({
   client,
   rentals,
+  preReservas,
   billableCount,
   billableTotal,
   equipments,
@@ -92,6 +105,10 @@ export default function ClienteDetailClient({
 }: {
   client: Client;
   rentals: RentalRow[];
+  // Leva Y: agendamentos futuros ainda sem disparos ("Agendar sem
+  // disparos"), separados do histórico porque é aí que mora o botão de
+  // gerar contrato antes do procedimento acontecer.
+  preReservas: PreReservaRow[];
   // Contagem e soma já calculadas no servidor a partir da view
   // rentals_contabilizaveis (exclui cancelada e modo teste). Não dá pra
   // recalcular aqui a partir de `rentals`, porque essa lista é a do
@@ -107,7 +124,7 @@ export default function ClienteDetailClient({
   const [reservaOpen, setReservaOpen] = useState(false);
   const [editClientOpen, setEditClientOpen] = useState(false);
   const [editingRental, setEditingRental] = useState<RentalRow | null>(null);
-  const [contratoRental, setContratoRental] = useState<RentalRow | null>(null);
+  const [contratoOrigem, setContratoOrigem] = useState<OrigemContrato | null>(null);
 
   const totalLocacoes = rentals.length;
   // Faturado e ticket médio saem da contagem contabilizável, não do
@@ -258,6 +275,71 @@ export default function ClienteDetailClient({
         )}
       </div>
 
+      {preReservas.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Próximos agendamentos</h2>
+          <p className="-mt-1 text-xs text-neutral-400">
+            Ainda sem disparos contados. O contrato já pode ser gerado agora, antes do procedimento.
+          </p>
+
+          {/* Celular: cartões empilhados */}
+          <div className="space-y-2 sm:hidden">
+            {preReservas.map((pr) => (
+              <div
+                key={pr.id}
+                className="rounded-xl border border-dashed border-brand-teal/40 bg-white/70 p-3 shadow-sm backdrop-blur-xl dark:border-brand-teal/30 dark:bg-neutral-900/55"
+              >
+                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  {pr.equipments?.name ?? "-"}
+                </p>
+                <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">{formatPeriodo(pr)}</p>
+                <button
+                  type="button"
+                  onClick={() => setContratoOrigem({ kind: "reserva", reserva: pr })}
+                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-200 py-1.5 text-xs font-medium text-neutral-600 hover:border-brand-teal hover:text-brand-teal dark:border-neutral-700 dark:text-neutral-300"
+                >
+                  <FileText size={13} strokeWidth={1.75} />
+                  Gerar contrato
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Tablet e notebook: tabela */}
+          <div className="hidden overflow-x-auto rounded-2xl border border-dashed border-brand-teal/40 bg-white/70 shadow-sm backdrop-blur-xl dark:border-brand-teal/30 dark:bg-neutral-900/55 sm:block">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-neutral-200 text-xs uppercase text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
+                <tr>
+                  <th className="px-4 py-3">Data</th>
+                  <th className="px-4 py-3">HIPRO</th>
+                  <th className="px-4 py-3 text-right">Contrato</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preReservas.map((pr) => (
+                  <tr key={pr.id} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+                    <td className="whitespace-nowrap px-4 py-3 text-neutral-600 dark:text-neutral-400">
+                      {formatPeriodo(pr)}
+                    </td>
+                    <td className="px-4 py-3 text-neutral-900 dark:text-neutral-100">{pr.equipments?.name ?? "-"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setContratoOrigem({ kind: "reserva", reserva: pr })}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:border-brand-teal hover:text-brand-teal dark:border-neutral-700 dark:text-neutral-300"
+                      >
+                        <FileText size={13} strokeWidth={1.75} />
+                        Gerar contrato
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Celular: cartões empilhados */}
       <div className="space-y-2 sm:hidden">
         {rentals.map((r) => (
@@ -290,23 +372,21 @@ export default function ClienteDetailClient({
               <span className="text-xs text-neutral-500 dark:text-neutral-400">
                 {PAYMENT_LABELS[r.payment_method] ?? r.payment_method}
               </span>
-              <div className="flex items-center gap-3">
-                <span className="font-medium text-brand-teal">{formatCurrency(Number(r.calculated_value))}</span>
-                {r.status !== "cancelada" && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setContratoRental(r);
-                    }}
-                    title="Gerar contrato"
-                    className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-400 hover:bg-neutral-100 hover:text-brand-teal dark:hover:bg-neutral-800"
-                  >
-                    <FileText size={15} strokeWidth={1.75} />
-                  </button>
-                )}
-              </div>
+              <span className="font-medium text-brand-teal">{formatCurrency(Number(r.calculated_value))}</span>
             </div>
+            {r.status !== "cancelada" && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setContratoOrigem({ kind: "rental", rental: r });
+                }}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-200 py-1.5 text-xs font-medium text-neutral-600 hover:border-brand-teal hover:text-brand-teal dark:border-neutral-700 dark:text-neutral-300"
+              >
+                <FileText size={13} strokeWidth={1.75} />
+                Gerar contrato
+              </button>
+            )}
           </div>
         ))}
         {rentals.length === 0 && (
@@ -327,7 +407,7 @@ export default function ClienteDetailClient({
               <th className="px-4 py-3 text-right">Valor</th>
               <th className="px-4 py-3">Pagamento</th>
               <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3"></th>
+              <th className="px-4 py-3">Contrato</th>
             </tr>
           </thead>
           <tbody>
@@ -360,18 +440,18 @@ export default function ClienteDetailClient({
                     {r.rescheduled && " · ↻"}
                   </span>
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 text-right">
+                <td className="whitespace-nowrap px-4 py-3">
                   {r.status !== "cancelada" && (
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setContratoRental(r);
+                        setContratoOrigem({ kind: "rental", rental: r });
                       }}
-                      title="Gerar contrato"
-                      className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-400 hover:bg-neutral-100 hover:text-brand-teal dark:hover:bg-neutral-800"
+                      className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:border-brand-teal hover:text-brand-teal dark:border-neutral-700 dark:text-neutral-300"
                     >
-                      <FileText size={15} strokeWidth={1.75} />
+                      <FileText size={13} strokeWidth={1.75} />
+                      Gerar
                     </button>
                   )}
                 </td>
@@ -450,8 +530,13 @@ export default function ClienteDetailClient({
         />
       )}
 
-      {contratoRental && (
-        <GerarContratoModal rental={contratoRental} client={client} onClose={() => setContratoRental(null)} />
+      {contratoOrigem && (
+        <GerarContratoModal
+          origem={contratoOrigem}
+          client={client}
+          pricingConfig={pricingConfig}
+          onClose={() => setContratoOrigem(null)}
+        />
       )}
     </div>
   );
