@@ -226,6 +226,9 @@ create table public.equipments (
   -- definir_status_equipamento. Nulos quando status = ativo.
   status_motivo text,
   status_desde timestamptz,
+  -- Leva U: previsão de retorno, opcional. Usada pelo aviso de 2 dias
+  -- antes e pelo retorno automático (aplicar_previsoes_manutencao_vencidas).
+  status_previsto_fim date,
   created_at timestamptz not null default now()
 );
 
@@ -233,6 +236,8 @@ comment on column public.equipments.status_motivo is
   'Motivo da manutenção, preenchido por definir_status_equipamento (leva T). Null quando status = ativo.';
 comment on column public.equipments.status_desde is
   'Quando o status mudou pela última vez (leva T).';
+comment on column public.equipments.status_previsto_fim is
+  'Data prevista de retorno da manutenção (leva U). Opcional; null quando não informada ou quando ativo.';
 
 insert into equipments (code, name) values
   ('hipro_1', 'HIPRO 1'),
@@ -502,6 +507,11 @@ declare
   v_equipment_code equipment_code_type;
   v_equipment_status text;
 begin
+  -- Leva U: confere previsões de retorno vencidas antes de olhar o
+  -- status, para nunca bloquear (ou liberar) com base num status que
+  -- já devia ter voltado a 'ativo'.
+  perform public.aplicar_previsoes_manutencao_vencidas();
+
   if new.event_type in ('hipro_1', 'hipro_2') then
     if new.equipment_id is null then
       raise exception 'Evento do tipo % precisa de um equipamento vinculado.', new.event_type;
@@ -1944,7 +1954,8 @@ grant execute on function public.reativar_agendamento to authenticated;
 create or replace function public.definir_status_equipamento(
   p_equipment_id uuid,
   p_status text,
-  p_motivo text default null
+  p_motivo text default null,
+  p_previsto_fim date default null
 )
 returns void
 language plpgsql
@@ -1954,6 +1965,7 @@ as $$
 declare
   v_nome text;
   v_status_atual text;
+  v_detalhes jsonb;
 begin
   if not has_module_permission('agenda') then
     raise exception 'Sem permissão para alterar o status de equipamentos.';
@@ -1961,6 +1973,10 @@ begin
 
   if p_status not in ('ativo', 'manutencao') then
     raise exception 'Status inválido: %. Use ''ativo'' ou ''manutencao''.', p_status;
+  end if;
+
+  if p_status = 'manutencao' and p_previsto_fim is not null and p_previsto_fim < current_date then
+    raise exception 'A previsão de retorno não pode ser uma data no passado.';
   end if;
 
   select name, status into v_nome, v_status_atual from equipments where id = p_equipment_id;
@@ -1975,18 +1991,101 @@ begin
   update equipments
      set status = p_status,
          status_motivo = case when p_status = 'manutencao' then nullif(trim(p_motivo), '') else null end,
-         status_desde = now()
+         status_desde = now(),
+         status_previsto_fim = case when p_status = 'manutencao' then p_previsto_fim else null end
    where id = p_equipment_id;
+
+  v_detalhes := jsonb_build_object('motivo', coalesce(nullif(trim(p_motivo), ''), 'não informado'));
+  if p_status = 'manutencao' and p_previsto_fim is not null then
+    v_detalhes := v_detalhes || jsonb_build_object('previsto_fim', to_char(p_previsto_fim, 'DD/MM/YYYY'));
+  end if;
 
   perform public.registrar_movimentacao(
     case p_status when 'manutencao' then 'manutencao_iniciada' else 'manutencao_finalizada' end,
     'equipments', p_equipment_id, 'Equipamento ' || v_nome,
-    jsonb_build_object('motivo', coalesce(nullif(trim(p_motivo), ''), 'não informado'))
+    v_detalhes
   );
 end;
 $$;
 
 grant execute on function public.definir_status_equipamento to authenticated;
+
+-- Leva U: devolve para 'ativo' todo equipamento cuja previsão de
+-- retorno já venceu. Chamada tanto pelo trigger de coerência (Agenda)
+-- quanto pela tela de Equipamentos, já que não há job agendado nesse
+-- projeto — este é o "cron sob demanda".
+create or replace function public.aplicar_previsoes_manutencao_vencidas()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_equip record;
+begin
+  for v_equip in
+    select id, name from equipments
+     where status = 'manutencao'
+       and status_previsto_fim is not null
+       and status_previsto_fim <= current_date
+  loop
+    update equipments
+       set status = 'ativo',
+           status_motivo = null,
+           status_desde = now(),
+           status_previsto_fim = null
+     where id = v_equip.id;
+
+    perform public.registrar_movimentacao(
+      'manutencao_finalizada', 'equipments', v_equip.id, 'Equipamento ' || v_equip.name,
+      jsonb_build_object('motivo', 'retorno automático: a previsão de volta foi atingida')
+    );
+  end loop;
+end;
+$$;
+
+grant execute on function public.aplicar_previsoes_manutencao_vencidas to authenticated;
+
+-- Leva U: botão "Adiar" do aviso que aparece 2 dias antes da previsão.
+create or replace function public.adiar_previsao_manutencao(
+  p_equipment_id uuid,
+  p_nova_previsao date
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_nome text;
+  v_status_atual text;
+begin
+  if not has_module_permission('agenda') then
+    raise exception 'Sem permissão para alterar a previsão de manutenção.';
+  end if;
+
+  if p_nova_previsao < current_date then
+    raise exception 'A nova previsão não pode ser uma data no passado.';
+  end if;
+
+  select name, status into v_nome, v_status_atual from equipments where id = p_equipment_id;
+  if v_nome is null then
+    raise exception 'Equipamento não encontrado (id %).', p_equipment_id;
+  end if;
+  if v_status_atual <> 'manutencao' then
+    raise exception 'Este equipamento não está em manutenção no momento.';
+  end if;
+
+  update equipments set status_previsto_fim = p_nova_previsao where id = p_equipment_id;
+
+  perform public.registrar_movimentacao(
+    'editado', 'equipments', p_equipment_id, 'Equipamento ' || v_nome,
+    jsonb_build_object('acao_detalhada', 'Previsão de retorno adiada para ' || to_char(p_nova_previsao, 'DD/MM/YYYY'))
+  );
+end;
+$$;
+
+grant execute on function public.adiar_previsao_manutencao to authenticated;
 
 -- Agendamentos de um cliente, para a ficha do lead: tudo que a tela
 -- precisa para desenhar os botões, numa função só.
