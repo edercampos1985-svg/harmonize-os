@@ -17,6 +17,8 @@ interface Client {
   parceiro?: boolean;
   treatment?: string | null;
   display_name?: string | null;
+  // Leva W: CPF/CNPJ do contratante, usado na geração do contrato de locação.
+  document?: string | null;
 }
 
 export default function EditarClienteModal({
@@ -46,6 +48,9 @@ export default function EditarClienteModal({
   const [email, setEmail] = useState(client.email ?? "");
   const [city, setCity] = useState(client.city ?? "");
   const [address, setAddress] = useState(client.address ?? "");
+  // Nome evita sombrear o `document` global do navegador (usado em outros
+  // arquivos do projeto, aqui não, mas é hábito seguro).
+  const [documentNumber, setDocumentNumber] = useState(client.document ?? "");
   const [notes, setNotes] = useState(client.notes ?? "");
   const [parceiro, setParceiro] = useState(client.parceiro ?? false);
   const [saving, setSaving] = useState(false);
@@ -70,6 +75,7 @@ export default function EditarClienteModal({
         email: email || null,
         city: toUpperOrNull(city),
         address: toUpperOrNull(address),
+        document: documentNumber.trim() || null,
         notes: notes || null,
         parceiro,
       })
@@ -172,6 +178,16 @@ export default function EditarClienteModal({
               placeholder="Rua, número, bairro"
               className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">CPF/CNPJ</label>
+            <input
+              value={documentNumber}
+              onChange={(e) => setDocumentNumber(e.target.value)}
+              placeholder="000.000.000-00 ou 00.000.000/0000-00"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+            />
+            <p className="mt-1 text-[11px] text-neutral-400">Usado na geração do contrato de locação.</p>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">Observação</label>
