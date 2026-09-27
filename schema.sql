@@ -203,11 +203,20 @@ create table public.clients (
   is_client boolean not null default false,
   -- Leva W: CPF ou CNPJ do contratante, usado na geração do contrato
   -- de locação. Texto livre, sem validação rígida de formato.
-  document text
+  document text,
+  -- Leva X: nome/razão social e endereço alternativos para contrato e
+  -- NF-e, quando diferentes do cadastro (ex: quem assina/paga é uma
+  -- empresa, não a pessoa física cadastrada). Nulos = usa name/address.
+  contrato_nome text,
+  contrato_endereco text
 );
 
 comment on column public.clients.document is
-  'CPF ou CNPJ do contratante, texto livre sem validação rígida de formato (leva W). Usado na geração do contrato de locação. Nulo = ainda não informado.';
+  'CPF ou CNPJ do contratante, texto livre sem validação rígida de formato (leva W). Usado como padrão na geração do contrato de locação e na NF-e (leva X) — editável a cada geração sem alterar o cadastro.';
+comment on column public.clients.contrato_nome is
+  'Nome/razão social a usar no contrato de locação e na NF-e quando for diferente do nome cadastrado (leva X). Nulo = usa clients.name. Editável também na hora de gerar cada contrato, sem alterar este padrão.';
+comment on column public.clients.contrato_endereco is
+  'Endereço a usar no contrato de locação e na NF-e quando for diferente do endereço cadastrado (leva X). Nulo = usa clients.address. Editável também na hora de gerar cada contrato, sem alterar este padrão.';
 comment on column public.clients.parceiro is
   'Parceiro conhecido: reserva data sem pagar a taxa de compromisso. Agendamentos deste cliente nascem com taxa_status = nao_aplica.';
 comment on column public.clients.excluir_financeiro is
@@ -3281,6 +3290,80 @@ end;
 $$;
 
 grant execute on function public.update_rental(uuid, uuid, date, integer, numeric, payment_method_type, event_status_type, text, date) to authenticated;
+
+-- ------------------------------------------------------------
+-- LEVA X: contratos de locação emitidos
+--
+-- O PDF do contrato é gerado sob demanda, direto no navegador — nenhum
+-- arquivo fica salvo no sistema. Esta tabela é o "controle dos
+-- emitidos": guarda um retrato (snapshot) completo dos dados usados em
+-- cada geração (contratante, equipamento, período, valor), para dar
+-- para reabrir e baixar de novo o MESMO documento depois, mesmo que o
+-- cadastro do cliente ou do equipamento mude nesse meio tempo.
+-- ------------------------------------------------------------
+create table public.contratos_emitidos (
+  id uuid primary key default gen_random_uuid(),
+  rental_id uuid not null references public.rentals(id),
+  client_id uuid not null references public.clients(id),
+  gerado_em timestamptz not null default now(),
+  gerado_por uuid references public.profiles(id),
+  dados jsonb not null,
+  is_test boolean not null default false
+);
+
+comment on table public.contratos_emitidos is
+  'Registro de cada contrato de locação gerado (leva X). O PDF em si não fica salvo no sistema — é gerado sob demanda, direto no navegador. "dados" guarda o retrato completo usado naquela geração, pra permitir baixar de novo o mesmo documento depois.';
+
+create index contratos_emitidos_rental_id_idx on public.contratos_emitidos(rental_id);
+create index contratos_emitidos_client_id_idx on public.contratos_emitidos(client_id);
+create index contratos_emitidos_gerado_em_idx on public.contratos_emitidos(gerado_em desc);
+create index contratos_emitidos_is_test_idx on public.contratos_emitidos(id) where is_test;
+
+alter table public.contratos_emitidos enable row level security;
+
+-- Mesmo padrão de movimentacoes: leitura por módulo (agenda, já que o
+-- contrato nasce de uma locação), sem policy de insert/update/delete —
+-- só a função abaixo (security definer) escreve aqui, pra o registro não
+-- poder ser fabricado ou alterado por fora dela.
+create policy "contratos_emitidos_select" on contratos_emitidos for select using (has_module_permission('agenda'));
+
+grant select on public.contratos_emitidos to authenticated;
+
+create trigger contratos_emitidos_apply_test_mode
+  before insert on public.contratos_emitidos
+  for each row execute function public.apply_test_mode();
+
+create or replace function public.registrar_contrato_emitido(
+  p_rental_id uuid,
+  p_dados jsonb
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_client_id uuid;
+  v_id uuid;
+begin
+  if not has_module_permission('agenda') then
+    raise exception 'Sem permissão para gerar contratos.';
+  end if;
+
+  select client_id into v_client_id from rentals where id = p_rental_id;
+  if v_client_id is null then
+    raise exception 'Locação não encontrada (id %).', p_rental_id;
+  end if;
+
+  insert into contratos_emitidos (rental_id, client_id, gerado_por, dados)
+  values (p_rental_id, v_client_id, auth.uid(), p_dados)
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+grant execute on function public.registrar_contrato_emitido(uuid, jsonb) to authenticated;
 
 -- ------------------------------------------------------------
 -- leva P.2 — corrigir o cliente de uma locação já lançada
