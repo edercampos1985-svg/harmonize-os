@@ -60,7 +60,7 @@ export default function Sidebar({
   const items = NAV_ITEMS.filter((item) => isAdmin || permissions?.[item.module]);
 
   return (
-    <aside className="hidden w-60 flex-col border-r border-white/50 bg-white/70 p-4 backdrop-blur-xl dark:border-neutral-800/60 dark:bg-neutral-900/60 md:flex">
+    <aside className="hidden w-60 flex-col border-r border-white/50 bg-white/70 p-4 backdrop-blur-xl dark:border-neutral-800/60 dark:bg-neutral-900/60 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto">
       <div className="mb-8 px-2">
         <img src="/harmonize-logo-full.png" alt="Harmonize" className="h-11 w-auto dark:hidden" />
         <img
