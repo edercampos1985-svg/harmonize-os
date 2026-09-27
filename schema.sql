@@ -483,6 +483,12 @@ create table public.calendar_events (
   -- reativar_agendamento.
   cancellation_reason text,
   no_show boolean not null default false,
+  -- Leva Z: deslocamento lançável já na pré-reserva, antes de existir
+  -- uma locação — mesma dupla de campos de rentals.km_ida/
+  -- valor_deslocamento, copiada para a locação recém-criada quando
+  -- finalize_rental_reservation finaliza esta reserva.
+  km_ida numeric(8,2),
+  valor_deslocamento numeric(10,2) not null default 0,
   check (date_end >= date_start)
 );
 
@@ -490,6 +496,10 @@ comment on column public.calendar_events.cancellation_reason is
   'Motivo do cancelamento, preenchido por cancelar_agendamento (leva S). Fica null enquanto o agendamento não foi cancelado, e é limpo de novo por reativar_agendamento.';
 comment on column public.calendar_events.no_show is
   'true = cancelado porque o cliente não compareceu, distinto de um cancelamento comum (leva S). Só é gravado por cancelar_agendamento.';
+comment on column public.calendar_events.km_ida is
+  'Km de ida até o local do procedimento, só para pré-reservas (leva Z) — igual a rentals.km_ida. Ao finalizar a reserva, este valor é copiado para a locação recém-criada.';
+comment on column public.calendar_events.valor_deslocamento is
+  'Ajuda de custo de deslocamento paga pelo cliente, lançável já na pré-reserva (leva Z), antes de a locação existir. Igual a rentals.valor_deslocamento, com o mesmo cálculo (R$ 50 a cada 50km de ida e volta).';
 
 alter table public.calendar_events add constraint calendar_events_taxa_status_check
   check (taxa_status in ('nao_aplica', 'pendente', 'paga', 'perdida'));
@@ -2749,6 +2759,48 @@ $$;
 
 grant execute on function public.definir_deslocamento_locacao to authenticated;
 
+-- Leva Z: mesma coisa, mas para uma pré-reserva ainda sem locação
+-- lançada (calendar_events, status pre_reserva) — o deslocamento pode
+-- ter sido pago pelo cliente antes do procedimento acontecer.
+create or replace function public.definir_deslocamento_reserva(
+  p_event_id uuid,
+  p_km_ida numeric,
+  p_valor_deslocamento numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not has_module_permission('agenda') then
+    raise exception 'Sem permissão para alterar agendamentos.';
+  end if;
+  if p_valor_deslocamento is not null and p_valor_deslocamento < 0 then
+    raise exception 'O valor de deslocamento não pode ser negativo.';
+  end if;
+
+  update calendar_events
+     set km_ida = p_km_ida,
+         valor_deslocamento = coalesce(p_valor_deslocamento, 0)
+   where id = p_event_id
+     and rental_id is null
+     and status = 'pre_reserva';
+
+  if not found then
+    raise exception 'Pré-reserva não encontrada (já pode ter sido finalizada ou cancelada).';
+  end if;
+
+  perform public.registrar_movimentacao(
+    'editado', 'calendar_events', p_event_id,
+    public.descrever_registro('calendar_events', p_event_id),
+    jsonb_build_object('acao_detalhada', 'deslocamento definido (pré-reserva)', 'km_ida', p_km_ida, 'valor_deslocamento', p_valor_deslocamento)
+  );
+end;
+$$;
+
+grant execute on function public.definir_deslocamento_reserva to authenticated;
+
 create or replace function public.definir_custo_disparo_manual_locacao(
   p_rental_id uuid,
   p_custo_disparo_manual numeric
@@ -3544,6 +3596,8 @@ declare
   v_event_date date;
   v_client_name text;
   v_is_mentoria boolean;
+  v_km_ida numeric;
+  v_valor_deslocamento numeric;
   v_created_by uuid := auth.uid();
   v_pix_conta text;
 begin
@@ -3551,8 +3605,8 @@ begin
     raise exception 'Sem permissão para finalizar locações';
   end if;
 
-  select client_id, equipment_id, date_start, is_mentoria
-    into v_client_id, v_equipment_id, v_event_date, v_is_mentoria
+  select client_id, equipment_id, date_start, is_mentoria, km_ida, valor_deslocamento
+    into v_client_id, v_equipment_id, v_event_date, v_is_mentoria, v_km_ida, v_valor_deslocamento
   from calendar_events
   where id = p_calendar_event_id and rental_id is null and status = 'pre_reserva';
 
@@ -3577,8 +3631,8 @@ begin
     end if;
   end if;
 
-  insert into rentals (client_id, equipment_id, event_date, shots, calculated_value, payment_method, notes, created_by)
-  values (v_client_id, v_equipment_id, v_event_date, p_shots, p_calculated_value, p_payment_method, p_notes, v_created_by)
+  insert into rentals (client_id, equipment_id, event_date, shots, calculated_value, payment_method, notes, created_by, km_ida, valor_deslocamento)
+  values (v_client_id, v_equipment_id, v_event_date, p_shots, p_calculated_value, p_payment_method, p_notes, v_created_by, v_km_ida, coalesce(v_valor_deslocamento, 0))
   returning id into v_rental_id;
 
   if p_pago then
