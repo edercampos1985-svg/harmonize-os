@@ -1,20 +1,24 @@
 // Leva X: geração do PDF do contrato de locação, direto no navegador
 // (nenhum arquivo fica salvo no servidor — só o retrato dos dados usados,
-// em contratos_emitidos.dados). Isolado neste arquivo de propósito: é a
-// ÚNICA peça que ainda precisa do texto real do contrato que a operação
-// já usa fora do sistema. Por enquanto o corpo do contrato abaixo é um
-// placeholder claramente marcado — as cláusulas de verdade (objeto,
-// obrigações, garantias, foro etc.) entram aqui assim que o modelo for
-// enviado, sem mexer em mais nenhum outro arquivo (o botão, o modal de
-// conferência de dados e o controle de emitidos já funcionam de ponta a
-// ponta usando este placeholder).
-import { Document, Page, Text, View, StyleSheet, pdf, Font } from "@react-pdf/renderer";
+// em contratos_emitidos.dados). Texto e estrutura replicam fielmente o
+// modelo real usado pela operação fora do sistema (contrato de
+// 08/06/2026, INSTITUTO ISABEL ALBUQUERQUE), com uma única mudança
+// deliberada: a 2ª cláusula (valor) monta a tabela de faixas a partir da
+// precificação configurada em Configurações no momento da geração, em
+// vez de repetir os números daquele contrato específico — assim o texto
+// gerado sempre bate com o que o sistema realmente cobra.
+import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
 
 export interface ContratoDados {
   contratante: {
     nome: string;
     documento: string;
     endereco: string | null;
+    // Leva X: quem assina pela parte contratante — normalmente a mesma
+    // pessoa do "nome", mas pode ser diferente quando o contratante é
+    // uma empresa (nome = razão social, responsável = quem assina).
+    responsavel: string;
+    email: string | null;
   };
   equipamento: {
     nome: string;
@@ -28,8 +32,37 @@ export interface ContratoDados {
     calculated_value: number;
     payment_method: string;
   };
+  // Retrato da precificação vigente em Configurações no momento desta
+  // geração — usado para montar a 2ª cláusula. Fica salvo aqui (e não só
+  // calculado ao vivo) para que "baixar de novo" reproduza exatamente o
+  // mesmo texto, mesmo que a precificação mude depois em Configurações.
+  precificacao: {
+    flatPackageLimit: number;
+    flatPackageValue: number;
+    tier2Limit: number;
+    tier2Rate: number;
+    tier3Rate: number;
+  };
   gerado_em: string;
 }
+
+// Dados do Contratado (Harmonize) — fixos, porque é sempre a mesma
+// empresa assinando. Se algum dia mudar (razão social, endereço,
+// responsável), edite só aqui.
+const CONTRATADO = {
+  razaoSocial: "Harmonize Bella Prime LTDA",
+  cnpj: "41.107.803/0001-27",
+  endereco: "Rua Hidelbrando Tourinho, 18, Salas 101 e 102 — Miramar, João Pessoa/PB",
+  responsavel: "Eder Campos de Almeida",
+  email: "harmonizequip@gmail.com",
+  cidadeForo: "João Pessoa/PB",
+};
+
+// Categoria do equipamento: hoje toda a frota (HIPRO 1 e HIPRO 2) é do
+// mesmo tipo (HIFU médico-estético). Se um dia entrar um equipamento de
+// categoria diferente, isso vira um campo próprio em equipments —
+// enquanto só existir esse tipo, fica fixo aqui.
+const CATEGORIA_EQUIPAMENTO = "Equipamento de HIFU Médico-Estético";
 
 const PAYMENT_LABELS: Record<string, string> = {
   pix: "PIX",
@@ -40,9 +73,19 @@ const PAYMENT_LABELS: Record<string, string> = {
   outros: "Outros",
 };
 
+const MESES_PT = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+
 function formatDateBR(date: string): string {
   const d = new Date(`${date}T00:00:00`);
   return d.toLocaleDateString("pt-BR");
+}
+
+function formatDataPorExtenso(isoDate: string): string {
+  const d = new Date(isoDate);
+  return `${d.getDate()} de ${MESES_PT[d.getMonth()]} de ${d.getFullYear()}`;
 }
 
 function formatPeriodo(d: ContratoDados["locacao"]): string {
@@ -56,106 +99,205 @@ function formatCurrencyBR(value: number): string {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+function formatRatePerShot(value: number): string {
+  return value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 const styles = StyleSheet.create({
-  page: { padding: 48, fontSize: 10.5, fontFamily: "Helvetica", lineHeight: 1.5, color: "#1a1a1a" },
-  title: { fontSize: 14, fontFamily: "Helvetica-Bold", textAlign: "center", marginBottom: 4 },
-  subtitle: { fontSize: 9, textAlign: "center", color: "#666", marginBottom: 20 },
-  sectionTitle: { fontSize: 11, fontFamily: "Helvetica-Bold", marginTop: 16, marginBottom: 6 },
-  row: { flexDirection: "row", marginBottom: 3 },
-  label: { width: 110, fontFamily: "Helvetica-Bold" },
-  value: { flex: 1 },
-  paragraph: { marginBottom: 8, textAlign: "justify" },
-  placeholderBox: {
-    marginTop: 14,
-    marginBottom: 14,
-    padding: 10,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: "#c0392b",
-  },
-  placeholderText: { color: "#c0392b", fontSize: 9.5 },
-  signatures: { marginTop: 56, flexDirection: "row", justifyContent: "space-between" },
-  signatureBlock: { width: "45%", alignItems: "center" },
-  signatureLine: { borderTopWidth: 1, borderTopColor: "#1a1a1a", width: "100%", marginBottom: 4 },
-  footer: { position: "absolute", bottom: 24, left: 48, right: 48, fontSize: 8, color: "#999", textAlign: "center" },
+  page: { padding: 48, fontSize: 10, fontFamily: "Helvetica", lineHeight: 1.45, color: "#1a1a1a" },
+  letterheadTitle: { fontSize: 13, fontFamily: "Helvetica-Bold", textAlign: "center", color: "#1a3d6d" },
+  letterheadLine: { fontSize: 8.5, textAlign: "center", color: "#444", marginTop: 2 },
+  hr: { borderBottomWidth: 1, borderBottomColor: "#1a3d6d", marginTop: 8, marginBottom: 10 },
+  docTitle: { fontSize: 12, fontFamily: "Helvetica-Bold", textAlign: "center", marginBottom: 12, color: "#1a1a1a" },
+  sectionTitle: { fontSize: 10.5, fontFamily: "Helvetica-Bold", marginTop: 12, marginBottom: 5, color: "#1a3d6d" },
+  table: { borderWidth: 1, borderColor: "#c7d2e0", marginBottom: 4 },
+  tableRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#c7d2e0" },
+  tableRowLast: { flexDirection: "row" },
+  tableLabel: { width: 150, backgroundColor: "#eaf0f8", padding: 5, fontFamily: "Helvetica-Bold", fontSize: 9 },
+  tableValue: { flex: 1, padding: 5, fontSize: 9 },
+  clauseTitle: { fontSize: 10, fontFamily: "Helvetica-Bold", marginTop: 10, marginBottom: 3 },
+  paragraph: { marginBottom: 4, textAlign: "justify" },
+  bullet: { marginBottom: 2, marginLeft: 10 },
+  signatures: { marginTop: 40, flexDirection: "row", justifyContent: "space-between" },
+  signatureBlock: { width: "45%" },
+  signatureLine: { borderTopWidth: 1, borderTopColor: "#1a1a1a", width: "100%", marginBottom: 4, marginTop: 30 },
+  signatureName: { fontFamily: "Helvetica-Bold", textAlign: "center", fontSize: 9.5 },
+  signatureRole: { textAlign: "center", fontSize: 8.5, color: "#555" },
+  testemunhasTitle: { fontFamily: "Helvetica-Bold", marginTop: 28, marginBottom: 24, fontSize: 9.5 },
 });
 
+function InfoTable({ rows }: { rows: [string, string][] }) {
+  return (
+    <View style={styles.table}>
+      {rows.map(([label, value], i) => (
+        <View key={label} style={i === rows.length - 1 ? styles.tableRowLast : styles.tableRow}>
+          <Text style={styles.tableLabel}>{label}</Text>
+          <Text style={styles.tableValue}>{value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function ContratoDocument({ dados }: { dados: ContratoDados }) {
+  const { flatPackageLimit, flatPackageValue, tier2Limit, tier2Rate, tier3Rate } = dados.precificacao;
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        <Text style={styles.title}>CONTRATO DE LOCAÇÃO DE EQUIPAMENTO</Text>
-        <Text style={styles.subtitle}>Gerado em {formatDateBR(dados.gerado_em.slice(0, 10))}</Text>
+        <Text style={styles.letterheadTitle}>{CONTRATADO.razaoSocial.toUpperCase()}</Text>
+        <Text style={styles.letterheadLine}>CNPJ: {CONTRATADO.cnpj}</Text>
+        <Text style={styles.letterheadLine}>{CONTRATADO.endereco}</Text>
+        <View style={styles.hr} />
+        <Text style={styles.docTitle}>CONTRATO DE LOCAÇÃO DE EQUIPAMENTO MÉDICO-ESTÉTICO</Text>
 
-        <Text style={styles.sectionTitle}>CONTRATANTE</Text>
-        <View style={styles.row}>
-          <Text style={styles.label}>Nome/Razão social</Text>
-          <Text style={styles.value}>{dados.contratante.nome}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>CPF/CNPJ</Text>
-          <Text style={styles.value}>{dados.contratante.documento}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Endereço</Text>
-          <Text style={styles.value}>{dados.contratante.endereco || "-"}</Text>
-        </View>
+        <Text style={styles.sectionTitle}>EQUIPAMENTO LOCADO</Text>
+        <InfoTable
+          rows={[
+            ["Marca / Modelo", dados.equipamento.nome],
+            ["Categoria", CATEGORIA_EQUIPAMENTO],
+            ["Registro ANVISA", dados.equipamento.anvisa_registro || "-"],
+            ["Número de Série", dados.equipamento.serial_number || "-"],
+            ["Período de Locação", formatPeriodo(dados.locacao)],
+          ]}
+        />
 
-        <Text style={styles.sectionTitle}>OBJETO DA LOCAÇÃO</Text>
-        <View style={styles.row}>
-          <Text style={styles.label}>Equipamento</Text>
-          <Text style={styles.value}>{dados.equipamento.nome}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Nº de série</Text>
-          <Text style={styles.value}>{dados.equipamento.serial_number || "-"}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Registro ANVISA</Text>
-          <Text style={styles.value}>{dados.equipamento.anvisa_registro || "-"}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Período</Text>
-          <Text style={styles.value}>{formatPeriodo(dados.locacao)}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Disparos</Text>
-          <Text style={styles.value}>{dados.locacao.shots.toLocaleString("pt-BR")}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Valor</Text>
-          <Text style={styles.value}>{formatCurrencyBR(Number(dados.locacao.calculated_value))}</Text>
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Forma de pagamento</Text>
-          <Text style={styles.value}>{PAYMENT_LABELS[dados.locacao.payment_method] ?? dados.locacao.payment_method}</Text>
-        </View>
+        <Text style={styles.sectionTitle}>CONTRATANTE (LOCATÁRIO)</Text>
+        <InfoTable
+          rows={[
+            ["Nome Completo", dados.contratante.nome],
+            ["CPF/CNPJ", dados.contratante.documento],
+            ["Endereço", dados.contratante.endereco || "-"],
+            ["Responsável / Signatário", dados.contratante.responsavel],
+            ["E-mail", dados.contratante.email || "-"],
+          ]}
+        />
 
-        {/* PLACEHOLDER: as cláusulas reais (objeto detalhado, obrigações
-            das partes, garantias, uso e conservação do equipamento,
-            vigência, rescisão, foro etc.) entram aqui, substituindo este
-            aviso, assim que o modelo de contrato usado pela operação for
-            enviado. Nada mais neste fluxo (botão, modal, controle de
-            emitidos) precisa mudar quando isso acontecer. */}
-        <View style={styles.placeholderBox}>
-          <Text style={styles.placeholderText}>
-            [TEXTO DO CONTRATO PENDENTE — este é um documento provisório. As cláusulas oficiais (objeto, obrigações,
-            garantias, vigência, rescisão, foro) entram aqui assim que o modelo usado pela operação for enviado.]
-          </Text>
-        </View>
+        <Text style={styles.sectionTitle}>CONTRATADO (LOCADOR)</Text>
+        <InfoTable
+          rows={[
+            ["Razão Social", CONTRATADO.razaoSocial],
+            ["CNPJ", CONTRATADO.cnpj],
+            ["Endereço", CONTRATADO.endereco],
+            ["Responsável / Signatário", CONTRATADO.responsavel],
+            ["E-mail", CONTRATADO.email],
+          ]}
+        />
+
+        <Text style={styles.clauseTitle}>1ª CLÁUSULA. DO OBJETO</Text>
+        <Text style={styles.paragraph}>
+          O presente instrumento tem por objeto a locação temporária do equipamento {dados.equipamento.nome} (HIFU),
+          devidamente registrado na ANVISA sob nº {dados.equipamento.anvisa_registro || "não informado"}, número de
+          série {dados.equipamento.serial_number || "não informado"}, pelo período compreendido entre{" "}
+          {formatDateBR(dados.locacao.event_date)} e {formatDateBR(dados.locacao.event_date_end || dados.locacao.event_date)}
+          , para uso exclusivo em procedimentos estéticos no estabelecimento do Contratante.
+        </Text>
+
+        <Text style={styles.clauseTitle}>2ª CLÁUSULA. DO VALOR E FORMA DE PAGAMENTO</Text>
+        <Text style={styles.paragraph}>
+          O valor da locação é calculado com base na quantidade de disparos realizados durante o período de locação,
+          conforme a tabela vigente:
+        </Text>
+        <Text style={styles.bullet}>
+          • Até {flatPackageLimit.toLocaleString("pt-BR")} disparos: pacote fixo de {formatCurrencyBR(flatPackageValue)};
+        </Text>
+        <Text style={styles.bullet}>
+          • De {(flatPackageLimit + 1).toLocaleString("pt-BR")} a {tier2Limit.toLocaleString("pt-BR")} disparos: pacote
+          fixo de {formatCurrencyBR(flatPackageValue)} acrescido de R$ {formatRatePerShot(tier2Rate)} por disparo que
+          exceder {flatPackageLimit.toLocaleString("pt-BR")};
+        </Text>
+        <Text style={styles.bullet}>
+          • Acima de {tier2Limit.toLocaleString("pt-BR")} disparos: pacote fixo de {formatCurrencyBR(flatPackageValue)}
+          {" "}acrescido de R$ {formatRatePerShot(tier3Rate)} por disparo sobre todo o excedente acima de{" "}
+          {flatPackageLimit.toLocaleString("pt-BR")} disparos.
+        </Text>
+        <Text style={styles.paragraph}>
+          O valor final é apurado com base no contador do equipamento no momento da devolução, sendo o comprovante de
+          pagamento condição para retirada do equipamento. Para esta locação, com{" "}
+          {dados.locacao.shots.toLocaleString("pt-BR")} disparos registrados e pagamento em{" "}
+          {PAYMENT_LABELS[dados.locacao.payment_method] ?? dados.locacao.payment_method}, o valor total apurado foi de{" "}
+          {formatCurrencyBR(Number(dados.locacao.calculated_value))}.
+        </Text>
+
+        <Text style={styles.clauseTitle}>3ª CLÁUSULA. DAS OBRIGAÇÕES DO CONTRATANTE</Text>
+        <Text style={styles.paragraph}>
+          São obrigações do Contratante: (a) utilizar o equipamento exclusivamente para a finalidade para a qual foi
+          locado, observando as normas sanitárias e técnicas aplicáveis; (b) não realizar qualquer modificação, reparo
+          ou intervenção técnica no equipamento sem autorização prévia e por escrito do Contratado; (c)
+          responsabilizar-se por danos ao equipamento decorrentes de uso inadequado, negligência, imprudência ou
+          imperícia; (d) restituir o equipamento nas mesmas condições em que o recebeu, ressalvado o desgaste natural
+          pelo uso correto; (e) não ceder ou sublocar o equipamento a terceiros.
+        </Text>
+
+        <Text style={styles.clauseTitle}>4ª CLÁUSULA. DAS OBRIGAÇÕES DO CONTRATADO</Text>
+        <Text style={styles.paragraph}>
+          São obrigações do Contratado: (a) disponibilizar o equipamento em plenas condições de funcionamento no
+          início do período de locação; (b) prestar suporte técnico remoto durante o período de uso; (c) garantir que
+          o equipamento esteja devidamente regularizado perante a ANVISA.
+        </Text>
+
+        <Text style={styles.clauseTitle}>5ª CLÁUSULA. DA RESPONSABILIDADE TÉCNICA E USO CLÍNICO</Text>
+        <Text style={styles.paragraph}>
+          O Contratante declara possuir equipe habilitada para a operação do equipamento HIFU e assume integral
+          responsabilidade técnica, clínica e legal pelos procedimentos realizados durante o período de locação,
+          isentando o Contratado de qualquer responsabilidade perante pacientes ou terceiros.
+        </Text>
+
+        <Text style={styles.clauseTitle}>6ª CLÁUSULA. DAS PENALIDADES</Text>
+        <Text style={styles.paragraph}>
+          Em caso de descumprimento de quaisquer obrigações previstas neste instrumento, a parte infratora ficará
+          sujeita a: (a) multa de 20% (vinte por cento) sobre o valor total do contrato; (b) responsabilidade integral
+          pelos danos causados, sem prejuízo das demais cominações legais.
+        </Text>
+
+        <Text style={styles.clauseTitle}>7ª CLÁUSULA. DA RESCISÃO</Text>
+        <Text style={styles.paragraph}>
+          O presente contrato poderá ser rescindido por qualquer das partes mediante comunicação prévia de 48
+          (quarenta e oito) horas, respondendo a parte que der causa à rescisão pelas perdas e danos decorrentes.
+        </Text>
+
+        <Text style={styles.clauseTitle}>8ª CLÁUSULA. DO FORO</Text>
+        <Text style={styles.paragraph}>
+          As partes elegem o Foro da Comarca de {CONTRATADO.cidadeForo} para dirimir quaisquer controvérsias oriundas
+          do presente instrumento, com renúncia expressa a qualquer outro, por mais privilegiado que seja.
+        </Text>
+
+        <Text style={styles.clauseTitle}>9ª CLÁUSULA. DAS DISPOSIÇÕES GERAIS</Text>
+        <Text style={styles.paragraph}>
+          Este contrato é celebrado em caráter irrevogável e irretratável, obrigando as partes, seus herdeiros e
+          sucessores. O presente instrumento substitui quaisquer entendimentos anteriores sobre o objeto aqui
+          pactuado.
+        </Text>
+
+        <Text style={styles.paragraph}>
+          E, por estarem justas e contratadas, as partes assinam o presente instrumento via online(autentique).
+        </Text>
+        <Text style={styles.paragraph}>
+          {CONTRATADO.cidadeForo}, {formatDataPorExtenso(dados.gerado_em)}.
+        </Text>
 
         <View style={styles.signatures}>
           <View style={styles.signatureBlock}>
             <View style={styles.signatureLine} />
-            <Text>Contratante</Text>
+            <Text style={styles.signatureName}>{CONTRATADO.razaoSocial}</Text>
+            <Text style={styles.signatureRole}>{CONTRATADO.responsavel} — CONTRATADO</Text>
           </View>
           <View style={styles.signatureBlock}>
             <View style={styles.signatureLine} />
-            <Text>Harmonize</Text>
+            <Text style={styles.signatureName}>{dados.contratante.nome}</Text>
+            <Text style={styles.signatureRole}>{dados.contratante.documento} — CONTRATANTE</Text>
           </View>
         </View>
 
-        <Text style={styles.footer}>Documento gerado automaticamente pelo Harmonize OS — não é uma via assinada.</Text>
+        <Text style={styles.testemunhasTitle}>TESTEMUNHAS:</Text>
+        <View style={styles.signatures}>
+          <View style={styles.signatureBlock}>
+            <View style={styles.signatureLine} />
+          </View>
+          <View style={styles.signatureBlock}>
+            <View style={styles.signatureLine} />
+          </View>
+        </View>
       </Page>
     </Document>
   );
