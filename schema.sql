@@ -367,7 +367,13 @@ create table public.rentals (
   -- (ver mais abaixo), nunca escritos direto em UPDATE fora dela.
   km_ida numeric(8,2),
   valor_deslocamento numeric(10,2) not null default 0,
-  custo_disparo_manual numeric(6,4)
+  custo_disparo_manual numeric(6,4),
+  -- Leva S: sincronizados automaticamente a partir de calendar_events
+  -- (trigger trg_sync_rental_from_calendar_event) sempre que um
+  -- cancelamento passa por cancelar_agendamento/cancelar_locacao. Nunca
+  -- escritos direto aqui.
+  cancellation_reason text,
+  no_show boolean not null default false
 );
 
 comment on column public.rentals.pago is
@@ -427,8 +433,18 @@ create table public.calendar_events (
   -- reserva. Nunca é setado por "Confirmar reserva", e nunca muda
   -- calendar_events.confirmed.
   confirmation_message_sent_at timestamptz,
+  -- Leva S: motivo do cancelamento e marca de não-comparecimento,
+  -- gravados só por cancelar_agendamento e limpos por
+  -- reativar_agendamento.
+  cancellation_reason text,
+  no_show boolean not null default false,
   check (date_end >= date_start)
 );
+
+comment on column public.calendar_events.cancellation_reason is
+  'Motivo do cancelamento, preenchido por cancelar_agendamento (leva S). Fica null enquanto o agendamento não foi cancelado, e é limpo de novo por reativar_agendamento.';
+comment on column public.calendar_events.no_show is
+  'true = cancelado porque o cliente não compareceu, distinto de um cancelamento comum (leva S). Só é gravado por cancelar_agendamento.';
 
 alter table public.calendar_events add constraint calendar_events_taxa_status_check
   check (taxa_status in ('nao_aplica', 'pendente', 'paga', 'perdida'));
@@ -1695,7 +1711,8 @@ grant execute on function public.marcar_realizada to authenticated;
 -- reativar_agendamento saber para onde voltar (leva E parte 2).
 create or replace function public.cancelar_agendamento(
   p_event_id uuid,
-  p_motivo text default null
+  p_motivo text default null,
+  p_no_show boolean default false
 )
 returns void
 language plpgsql
@@ -1732,10 +1749,13 @@ begin
 
   v_descricao := public.descrever_registro('calendar_events', p_event_id);
 
-  update calendar_events set status = 'cancelada' where id = p_event_id;
-  if v_rental_id is not null then
-    update rentals set status = 'cancelada' where id = v_rental_id;
-  end if;
+  update calendar_events
+     set status = 'cancelada',
+         cancellation_reason = nullif(trim(p_motivo), ''),
+         no_show = coalesce(p_no_show, false)
+   where id = p_event_id;
+  -- rentals.status/cancellation_reason/no_show são sincronizados sozinhos
+  -- pelo trigger trg_sync_rental_from_calendar_event (leva R + S).
 
   if v_taxa = 'paga' then
     update calendar_events set taxa_status = 'perdida' where id = p_event_id;
@@ -1755,6 +1775,7 @@ begin
     'cancelado', 'calendar_events', p_event_id, v_descricao,
     jsonb_build_object(
       'motivo', coalesce(nullif(trim(p_motivo), ''), 'não informado'),
+      'no_show', coalesce(p_no_show, false),
       'taxa', coalesce(v_taxa, 'nao_aplica'),
       'status_anterior', v_status
     )
@@ -1763,6 +1784,33 @@ end;
 $$;
 
 grant execute on function public.cancelar_agendamento to authenticated;
+
+-- Leva S: atalho para quem só tem o id da locação (EditarLocacaoModal),
+-- acha o evento de agenda vinculado (rental_id é único desde a leva R) e
+-- delega para cancelar_agendamento, sem duplicar nenhuma regra de
+-- negócio.
+create or replace function public.cancelar_locacao(
+  p_rental_id uuid,
+  p_motivo text default null,
+  p_no_show boolean default false
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_event_id uuid;
+begin
+  select id into v_event_id from calendar_events where rental_id = p_rental_id;
+  if v_event_id is null then
+    raise exception 'Locação sem evento de agenda vinculado (id %).', p_rental_id;
+  end if;
+  perform public.cancelar_agendamento(v_event_id, p_motivo, p_no_show);
+end;
+$$;
+
+grant execute on function public.cancelar_locacao to authenticated;
 
 -- Reativar um agendamento cancelado. Devolve o status de antes do
 -- cancelamento (lido da movimentação mais recente, leva E parte 2) em
@@ -1823,9 +1871,18 @@ begin
     v_status_anterior := 'confirmada';
   end if;
 
-  update calendar_events set status = v_status_anterior, confirmed = false where id = p_event_id;
+  update calendar_events
+     set status = v_status_anterior,
+         confirmed = false,
+         cancellation_reason = null,
+         no_show = false
+   where id = p_event_id;
   if v_rental_id is not null then
-    update rentals set status = v_status_anterior where id = v_rental_id;
+    update rentals
+       set status = v_status_anterior,
+           cancellation_reason = null,
+           no_show = false
+     where id = v_rental_id;
   end if;
 
   if v_taxa = 'perdida' and v_taxa_transacao is not null then
@@ -1854,6 +1911,8 @@ grant execute on function public.reativar_agendamento to authenticated;
 
 -- Agendamentos de um cliente, para a ficha do lead: tudo que a tela
 -- precisa para desenhar os botões, numa função só.
+drop function if exists public.agendamentos_do_cliente(uuid);
+
 create or replace function public.agendamentos_do_cliente(p_client_id uuid)
 returns table (
   event_id uuid,
@@ -1868,7 +1927,9 @@ returns table (
   taxa_status text,
   taxa_valor numeric,
   pago boolean,
-  pago_em date
+  pago_em date,
+  cancellation_reason text,
+  no_show boolean
 )
 language sql
 stable
@@ -1893,7 +1954,9 @@ as $$
     ev.taxa_status,
     ev.taxa_valor,
     coalesce(r.pago, false),
-    r.pago_em
+    r.pago_em,
+    ev.cancellation_reason,
+    ev.no_show
   from calendar_events ev
   left join equipments eq on eq.id = ev.equipment_id
   left join rentals r on r.id = ev.rental_id
@@ -2882,6 +2945,14 @@ begin
     raise exception 'Locação não encontrada (id %).', p_rental_id;
   end if;
 
+  -- Leva S: cancelar por aqui pulava as regras de negócio (bloquear se
+  -- já foi paga, taxa paga virar perdida, motivo/no-show). Uma locação
+  -- que já estava cancelada continua podendo ser salva normalmente
+  -- (outros campos), só a TRANSIÇÃO para cancelada é que é bloqueada.
+  if p_status = 'cancelada' and v_old_status is distinct from 'cancelada' then
+    raise exception 'Para cancelar uma locação, use o botão "Cancelar locação" (motivo e não comparecimento ficam registrados). Não é possível cancelar por aqui.';
+  end if;
+
   select code into v_equipment_code from equipments where id = p_equipment_id;
   if v_equipment_code is null then
     raise exception 'Equipamento não encontrado (id %).', p_equipment_id;
@@ -3289,10 +3360,15 @@ set search_path = public
 as $$
 begin
   if new.rental_id is not null
-     and (new.date_start is distinct from old.date_start or new.status is distinct from old.status) then
+     and (new.date_start is distinct from old.date_start
+          or new.status is distinct from old.status
+          or new.cancellation_reason is distinct from old.cancellation_reason
+          or new.no_show is distinct from old.no_show) then
     update rentals
        set event_date = new.date_start,
-           status = new.status
+           status = new.status,
+           cancellation_reason = new.cancellation_reason,
+           no_show = new.no_show
      where id = new.rental_id;
   end if;
   return new;
@@ -3300,7 +3376,7 @@ end;
 $$;
 
 create trigger trg_sync_rental_from_calendar_event
-  after update of date_start, status on calendar_events
+  after update of date_start, status, cancellation_reason, no_show on calendar_events
   for each row execute function public.sync_rental_from_calendar_event();
 
 -- Ao agendar uma locação HIPRO (evento de agenda com equipamento e
