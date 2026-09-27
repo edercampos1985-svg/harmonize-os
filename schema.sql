@@ -457,6 +457,44 @@ alter table calendar_events
   )
   where (status <> 'cancelada' and equipment_id is not null);
 
+-- Uma locação (rentals) tem no máximo um evento de agenda vinculado —
+-- leva R, formaliza uma relação que já era 1:1 na prática (nenhuma
+-- linha divergente encontrada antes de aplicar).
+create unique index if not exists calendar_events_rental_uidx
+  on calendar_events(rental_id) where rental_id is not null;
+
+-- event_type e equipment_id não podem discordar entre si (leva R):
+-- hipro_1/hipro_2 sempre com o equipamento correspondente, qualquer
+-- outro tipo sempre sem equipamento. Feito como trigger (não como
+-- check simples) porque precisa consultar equipments.code.
+create or replace function public.validar_equipamento_coerente()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_equipment_code equipment_code_type;
+begin
+  if new.event_type in ('hipro_1', 'hipro_2') then
+    if new.equipment_id is null then
+      raise exception 'Evento do tipo % precisa de um equipamento vinculado.', new.event_type;
+    end if;
+    select code into v_equipment_code from equipments where id = new.equipment_id;
+    if v_equipment_code::text is distinct from new.event_type::text then
+      raise exception 'Evento do tipo % não pode apontar para o equipamento %.', new.event_type, v_equipment_code;
+    end if;
+  elsif new.equipment_id is not null then
+    raise exception 'Evento do tipo % não pode ter equipamento vinculado.', new.event_type;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger trg_validar_equipamento_coerente
+  before insert or update of event_type, equipment_id on calendar_events
+  for each row execute function public.validar_equipamento_coerente();
+
 -- ------------------------------------------------------------
 -- MENTORIAS
 -- ------------------------------------------------------------
@@ -2830,6 +2868,7 @@ declare
   v_old_status event_status_type;
   v_old_value numeric;
   v_descricao text;
+  v_equipment_code equipment_code_type;
 begin
   if not has_module_permission('agenda') then
     raise exception 'Sem permissão para editar locações';
@@ -2841,6 +2880,11 @@ begin
 
   if v_client_id is null then
     raise exception 'Locação não encontrada (id %).', p_rental_id;
+  end if;
+
+  select code into v_equipment_code from equipments where id = p_equipment_id;
+  if v_equipment_code is null then
+    raise exception 'Equipamento não encontrado (id %).', p_equipment_id;
   end if;
 
   update rentals
@@ -2863,7 +2907,8 @@ begin
   end if;
 
   update calendar_events
-  set equipment_id = p_equipment_id,
+  set event_type = v_equipment_code::text::calendar_event_type,
+      equipment_id = p_equipment_id,
       date_start = p_event_date,
       date_end = p_event_date,
       value = p_calculated_value,
@@ -3231,6 +3276,32 @@ $$;
 create trigger trg_calendar_event_reschedule
   after update of date_start on calendar_events
   for each row execute function public.handle_calendar_event_reschedule();
+
+-- calendar_events passa a ser a fonte de verdade de quando/status de
+-- uma locação (leva R): ao mudar data ou status do evento vinculado a
+-- uma locação, rentals é atualizado junto automaticamente, em vez de
+-- depender de cada função lembrar de fazer as duas gravações.
+create or replace function public.sync_rental_from_calendar_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.rental_id is not null
+     and (new.date_start is distinct from old.date_start or new.status is distinct from old.status) then
+    update rentals
+       set event_date = new.date_start,
+           status = new.status
+     where id = new.rental_id;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger trg_sync_rental_from_calendar_event
+  after update of date_start, status on calendar_events
+  for each row execute function public.sync_rental_from_calendar_event();
 
 -- Ao agendar uma locação HIPRO (evento de agenda com equipamento e
 -- cliente vinculados), promove o cliente para a etapa "Agendado"
