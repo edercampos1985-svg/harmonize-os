@@ -96,7 +96,18 @@ create trigger trg_sync_rental_from_calendar_event
 
 -- ------------------------------------------------------------
 -- 3. cancelar_agendamento ganha p_no_show e grava as colunas novas
+--
+-- create or replace function não troca uma função quando a lista de
+-- parâmetros muda de tamanho — o Postgres entende como criar uma
+-- função DISTINTA, com o mesmo nome. Sem este drop antes, ficariam
+-- duas versões de cancelar_agendamento ao mesmo tempo (a antiga de 2
+-- parâmetros e esta nova de 3), e o "grant" logo abaixo — que não
+-- especifica os parâmetros — ficaria ambíguo e falharia, desfazendo a
+-- migration inteira (confirmado: foi exatamente isso que aconteceu na
+-- primeira tentativa desta leva).
 -- ------------------------------------------------------------
+drop function if exists public.cancelar_agendamento(uuid, text);
+
 create or replace function public.cancelar_agendamento(
   p_event_id uuid,
   p_motivo text default null,
