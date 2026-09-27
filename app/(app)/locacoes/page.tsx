@@ -37,7 +37,7 @@ export default async function LocacoesPage({
   let consulta = supabase
     .from("rentals")
     .select(
-      "id, event_date, shots, calculated_value, payment_method, status, pago, pago_em, rescheduled, client_id, equipment_id, clients(name), equipments(name)"
+      "id, event_date, event_date_end, shots, calculated_value, payment_method, status, pago, pago_em, rescheduled, client_id, equipment_id, clients(name), equipments(name)"
     )
     .eq("is_test", false)
     .gte("event_date", periodo.inicio)
