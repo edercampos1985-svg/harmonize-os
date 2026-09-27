@@ -29,6 +29,9 @@ interface Agendamento {
   taxa_valor: number | null;
   pago: boolean;
   pago_em: string | null;
+  // Leva S: preenchidos só quando situacao é "cancelado".
+  cancellation_reason: string | null;
+  no_show: boolean;
 }
 
 const SITUACAO_META: Record<string, { label: string; classe: string }> = {
@@ -144,7 +147,11 @@ export default function AgendamentosDoCliente({
 
   function cancelar(eventId: string) {
     const motivo = window.prompt("Motivo do cancelamento (opcional):") ?? "";
-    executar("cancelar_agendamento", { p_event_id: eventId, p_motivo: motivo }, eventId);
+    // Leva S: distingue não-comparecimento de um cancelamento comum.
+    const noShow = window.confirm(
+      "O cliente não compareceu (no-show)? OK = sim, Cancelar = não / não se aplica."
+    );
+    executar("cancelar_agendamento", { p_event_id: eventId, p_motivo: motivo, p_no_show: noShow }, eventId);
   }
 
   function confirmarPagamento(a: Agendamento) {
@@ -280,6 +287,13 @@ export default function AgendamentosDoCliente({
                 <p className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
                   O cliente cancelou depois de pagar a taxa, então o valor ficou como receita e não
                   vira crédito. Reativar o agendamento devolve a taxa.
+                </p>
+              )}
+
+              {cancelado && (a.no_show || a.cancellation_reason) && (
+                <p className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                  {a.no_show ? "Não compareceu." : "Cancelado."}
+                  {a.cancellation_reason ? ` Motivo: ${a.cancellation_reason}` : ""}
                 </p>
               )}
 
