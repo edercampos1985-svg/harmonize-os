@@ -19,6 +19,11 @@ interface Client {
   display_name?: string | null;
   // Leva W: CPF/CNPJ do contratante, usado na geração do contrato de locação.
   document?: string | null;
+  // Leva X: nome/razão social e endereço alternativos para contrato e
+  // NF-e, quando diferentes do cadastro (ex: quem paga/assina é uma
+  // empresa, não a pessoa cadastrada). Nulos = usa name/address normais.
+  contrato_nome?: string | null;
+  contrato_endereco?: string | null;
 }
 
 export default function EditarClienteModal({
@@ -51,6 +56,14 @@ export default function EditarClienteModal({
   // Nome evita sombrear o `document` global do navegador (usado em outros
   // arquivos do projeto, aqui não, mas é hábito seguro).
   const [documentNumber, setDocumentNumber] = useState(client.document ?? "");
+  // Leva X: dados alternativos para contrato/NF-e. Ficam recolhidos por
+  // padrão (ver showDadosContrato) porque só uma minoria dos clientes
+  // precisa disso — a maioria usa o próprio nome/endereço do cadastro.
+  const [contratoNome, setContratoNome] = useState(client.contrato_nome ?? "");
+  const [contratoEndereco, setContratoEndereco] = useState(client.contrato_endereco ?? "");
+  const [showDadosContrato, setShowDadosContrato] = useState(
+    Boolean(client.contrato_nome || client.contrato_endereco)
+  );
   const [notes, setNotes] = useState(client.notes ?? "");
   const [parceiro, setParceiro] = useState(client.parceiro ?? false);
   const [saving, setSaving] = useState(false);
@@ -76,6 +89,8 @@ export default function EditarClienteModal({
         city: toUpperOrNull(city),
         address: toUpperOrNull(address),
         document: documentNumber.trim() || null,
+        contrato_nome: contratoNome.trim() || null,
+        contrato_endereco: contratoEndereco.trim() || null,
         notes: notes || null,
         parceiro,
       })
@@ -189,6 +204,48 @@ export default function EditarClienteModal({
             />
             <p className="mt-1 text-[11px] text-neutral-400">Usado na geração do contrato de locação.</p>
           </div>
+
+          {!showDadosContrato && (
+            <button
+              type="button"
+              onClick={() => setShowDadosContrato(true)}
+              className="text-xs text-brand-teal underline underline-offset-2"
+            >
+              + Contrato/NF-e em nome diferente do cliente
+            </button>
+          )}
+
+          {showDadosContrato && (
+            <div className="space-y-3 rounded-xl border border-neutral-200 p-3 dark:border-neutral-700">
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                Preencha só se quem assina o contrato e recebe a nota fiscal for diferente do nome/endereço acima (ex:
+                uma empresa). Fica valendo como padrão, mas ainda dá pra ajustar a cada contrato gerado.
+              </p>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                  Nome/Razão social para contrato e NF-e
+                </label>
+                <input
+                  value={contratoNome}
+                  onChange={(e) => setContratoNome(e.target.value)}
+                  placeholder="Deixe em branco para usar o nome acima"
+                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                  Endereço para contrato e NF-e
+                </label>
+                <input
+                  value={contratoEndereco}
+                  onChange={(e) => setContratoEndereco(e.target.value)}
+                  placeholder="Deixe em branco para usar o endereço do cadastro"
+                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                />
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">Observação</label>
             <textarea
