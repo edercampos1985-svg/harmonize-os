@@ -19,6 +19,9 @@ const PAGAMENTOS: Record<string, string> = {
 interface Locacao {
   id: string;
   event_date: string;
+  // Leva W: data final quando a locação cobre mais de um dia. Nulo/ausente =
+  // locação de um dia só (o caso comum).
+  event_date_end?: string | null;
   shots: number;
   calculated_value: number;
   payment_method: string;
@@ -29,6 +32,16 @@ interface Locacao {
   client_id: string;
   clients?: { name: string } | null;
   equipments?: { name: string } | null;
+}
+
+// Leva W: mostra o período completo quando a locação cobre mais de um dia
+// (event_date_end preenchido e diferente da data inicial); senão mostra só a
+// data única, igual sempre foi.
+function formatPeriodo(r: Locacao): string {
+  if (r.event_date_end && r.event_date_end !== r.event_date) {
+    return `${formatDate(r.event_date)} a ${formatDate(r.event_date_end)}`;
+  }
+  return formatDate(r.event_date);
 }
 
 function situacao(r: Locacao): { label: string; classe: string } {
@@ -85,7 +98,7 @@ export default function LocacoesClient({
     exportarCsv(
       linhas,
       [
-        { titulo: "Data", valor: (r) => formatDate(r.event_date) },
+        { titulo: "Data", valor: (r) => formatPeriodo(r) },
         { titulo: "Cliente", valor: (r) => r.clients?.name ?? "" },
         { titulo: "Equipamento", valor: (r) => r.equipments?.name ?? "" },
         { titulo: "Disparos", valor: (r) => Number(r.shots ?? 0) },
@@ -213,7 +226,7 @@ export default function LocacoesClient({
                     {r.clients?.name ?? "Cliente removido"}
                   </p>
                   <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    {formatDate(r.event_date)} · {r.equipments?.name ?? "-"} ·{" "}
+                    {formatPeriodo(r)} · {r.equipments?.name ?? "-"} ·{" "}
                     {Number(r.shots ?? 0).toLocaleString("pt-BR")} disparos
                   </p>
                 </div>
@@ -269,7 +282,7 @@ export default function LocacoesClient({
                   className="border-b border-neutral-100 last:border-0 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-800/50"
                 >
                   <td className="whitespace-nowrap px-4 py-3 text-neutral-600 dark:text-neutral-400">
-                    {formatDate(r.event_date)}
+                    {formatPeriodo(r)}
                   </td>
                   <td className="px-4 py-3 text-neutral-900 dark:text-neutral-100">
                     <Link
