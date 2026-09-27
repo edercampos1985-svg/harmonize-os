@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { calculateRentalValue, type PricingConfig } from "@/lib/rental-pricing";
-import { calcularValorDeslocamento } from "@/lib/rental-calculator";
 import { formatCurrency } from "@/lib/format";
 import ClientPicker, { type ClientOption } from "@/components/ClientPicker";
 
@@ -85,15 +84,19 @@ export default function EditarLocacaoModal({
   const [paymentMethod, setPaymentMethod] = useState(rental.payment_method);
   const [status, setStatus] = useState(rental.status);
   const [notes, setNotes] = useState(rental.notes ?? "");
-  // Leva O/Y: deslocamento (ajuda de custo) — mesmo campo e mesma fórmula
-  // (R$ 50 a cada 50km de ida e volta) já usados na calculadora de nova
-  // locação, agora também editável numa locação que já existe.
+  // Leva O/Y/Z: deslocamento (ajuda de custo) — valor digitado direto (é o
+  // que o cliente de fato pagou, quase nunca dá pra saber o km exato de
+  // cabeça), com o km como campo separado, só para registro/histórico,
+  // sem calcular nada a partir dele.
+  const [valorDeslocamento, setValorDeslocamento] = useState(
+    rental.valor_deslocamento ? String(rental.valor_deslocamento).replace(".", ",") : ""
+  );
   const [kmIda, setKmIda] = useState(rental.km_ida ? String(rental.km_ida) : "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const kmIdaNumber = Number(kmIda.replace(/\D/g, "")) || 0;
-  const valorDeslocamentoPreview = calcularValorDeslocamento(kmIdaNumber);
+  const valorDeslocamentoNumber = Number(valorDeslocamento.replace(",", ".")) || 0;
 
   // Leva S: cancelar deixou de ser uma opção do dropdown de status —
   // passa por uma RPC dedicada (cancelar_locacao), que aplica as mesmas
@@ -217,7 +220,7 @@ export default function EditarLocacaoModal({
     const { error: deslocamentoError } = await supabase.rpc("definir_deslocamento_locacao", {
       p_rental_id: rental.id,
       p_km_ida: kmIdaNumber > 0 ? kmIdaNumber : null,
-      p_valor_deslocamento: valorDeslocamentoPreview,
+      p_valor_deslocamento: valorDeslocamentoNumber,
     });
 
     setSaving(false);
@@ -350,27 +353,32 @@ export default function EditarLocacaoModal({
 
           <div>
             <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-              Deslocamento — km de ida (opcional)
+              Ajuda de custo — deslocamento (opcional)
             </label>
             <div className="flex items-center gap-2">
+              <span className="text-sm text-neutral-500 dark:text-neutral-400">R$</span>
               <input
-                inputMode="numeric"
-                value={kmIda}
-                onChange={(e) => setKmIda(e.target.value.replace(/\D/g, ""))}
-                placeholder="0"
+                inputMode="decimal"
+                value={valorDeslocamento}
+                onChange={(e) => setValorDeslocamento(e.target.value.replace(/[^\d,]/g, ""))}
+                placeholder="0,00"
                 className="w-28 rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
               />
-              {valorDeslocamentoPreview > 0 && (
-                <span className="text-xs text-neutral-500">
-                  {kmIdaNumber} km ida · {kmIdaNumber * 2} km ida e volta ={" "}
-                  <strong>{formatCurrency(valorDeslocamentoPreview)}</strong>
-                </span>
-              )}
             </div>
             <p className="mt-1 text-xs text-neutral-400">
-              Ajuda de custo cobrada à parte do valor da locação, calculada em R$ 50 a cada 50 km de ida e volta. Deixe
+              Valor que o cliente pagou de ajuda de custo pelo deslocamento, cobrado à parte do valor da locação. Deixe
               em branco (ou zere) para remover um deslocamento lançado por engano.
             </p>
+            <label className="mb-1 mt-2 block text-xs font-medium text-neutral-500 dark:text-neutral-500">
+              Km de ida (opcional, só para registro — não calcula o valor acima)
+            </label>
+            <input
+              inputMode="numeric"
+              value={kmIda}
+              onChange={(e) => setKmIda(e.target.value.replace(/\D/g, ""))}
+              placeholder="0"
+              className="w-28 rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+            />
           </div>
 
           {status === "cancelada" ? (
