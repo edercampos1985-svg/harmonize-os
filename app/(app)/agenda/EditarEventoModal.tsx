@@ -8,8 +8,7 @@ import ConfirmarExclusaoModal from "@/components/ConfirmarExclusaoModal";
 import CalculadoraLocacaoModal from "@/components/CalculadoraLocacaoModal";
 import ClientPicker, { type ClientOption } from "@/components/ClientPicker";
 import GerarContratoModal, { type OrigemContrato } from "@/components/GerarContratoModal";
-import { calcularValorDeslocamento } from "@/lib/rental-calculator";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import type { PricingConfig, MentoriaPricingConfig } from "@/lib/rental-pricing";
 
 const EQUIPMENT_LABELS: Record<string, string> = {
@@ -136,6 +135,11 @@ export default function EditarEventoModal({
   // contrato quanto o campo de deslocamento abaixo precisam deles.
   const [rentalDetails, setRentalDetails] = useState<RentalDetails | null>(null);
   const [loadingRental, setLoadingRental] = useState(false);
+  // Leva Z (correção): o valor da ajuda de custo é digitado direto — quase
+  // nunca dá pra saber o km exato de cabeça, mas o valor que o cliente
+  // pagou (ex: R$500) sim. Km fica como campo separado, só para registro/
+  // histórico, sem calcular nada a partir dele nem ser calculado por ele.
+  const [valorDeslocamento, setValorDeslocamento] = useState("");
   const [kmIda, setKmIda] = useState("");
   const [savingDeslocamento, setSavingDeslocamento] = useState(false);
   const [deslocamentoError, setDeslocamentoError] = useState<string | null>(null);
@@ -163,6 +167,7 @@ export default function EditarEventoModal({
           };
           setRentalDetails(normalized);
           setKmIda(normalized.km_ida ? String(normalized.km_ida) : "");
+          setValorDeslocamento(normalized.valor_deslocamento ? String(normalized.valor_deslocamento).replace(".", ",") : "");
         }
       });
     return () => {
@@ -172,7 +177,24 @@ export default function EditarEventoModal({
   }, [isRentalEvent, event.rental_id]);
 
   const kmIdaNumber = Number(kmIda.replace(/\D/g, "")) || 0;
-  const valorDeslocamentoPreview = calcularValorDeslocamento(kmIdaNumber);
+  const valorDeslocamentoNumber = Number(valorDeslocamento.replace(",", ".")) || 0;
+
+  async function handleSalvarDeslocamento() {
+    if (!event.rental_id) return;
+    setSavingDeslocamento(true);
+    setDeslocamentoError(null);
+    const { error } = await supabase.rpc("definir_deslocamento_locacao", {
+      p_rental_id: event.rental_id,
+      p_km_ida: kmIdaNumber > 0 ? kmIdaNumber : null,
+      p_valor_deslocamento: valorDeslocamentoNumber,
+    });
+    setSavingDeslocamento(false);
+    if (error) {
+      setDeslocamentoError("Não foi possível salvar o deslocamento. Tente novamente.");
+      return;
+    }
+    onSaved();
+  }
 
   // Leva Z: o deslocamento também precisa poder ser lançado já na
   // pré-reserva, antes de existir uma locação — o cliente pode pagar a
@@ -180,6 +202,7 @@ export default function EditarEventoModal({
   // (a Agenda não carrega isso na lista principal) e, se ainda nada foi
   // lançado, começa em branco.
   const [loadingReservaDeslocamento, setLoadingReservaDeslocamento] = useState(false);
+  const [valorDeslocamentoReserva, setValorDeslocamentoReserva] = useState("");
   const [kmIdaReserva, setKmIdaReserva] = useState("");
   const [savingDeslocamentoReserva, setSavingDeslocamentoReserva] = useState(false);
   const [deslocamentoReservaError, setDeslocamentoReservaError] = useState<string | null>(null);
@@ -198,6 +221,7 @@ export default function EditarEventoModal({
         setLoadingReservaDeslocamento(false);
         if (data) {
           setKmIdaReserva(data.km_ida ? String(data.km_ida) : "");
+          setValorDeslocamentoReserva(data.valor_deslocamento ? String(data.valor_deslocamento).replace(".", ",") : "");
         }
       });
     return () => {
@@ -207,7 +231,7 @@ export default function EditarEventoModal({
   }, [isPendingReservation, event.id]);
 
   const kmIdaReservaNumber = Number(kmIdaReserva.replace(/\D/g, "")) || 0;
-  const valorDeslocamentoReservaPreview = calcularValorDeslocamento(kmIdaReservaNumber);
+  const valorDeslocamentoReservaNumber = Number(valorDeslocamentoReserva.replace(",", ".")) || 0;
 
   async function handleSalvarDeslocamentoReserva() {
     setSavingDeslocamentoReserva(true);
@@ -215,7 +239,7 @@ export default function EditarEventoModal({
     const { error } = await supabase.rpc("definir_deslocamento_reserva", {
       p_event_id: event.id,
       p_km_ida: kmIdaReservaNumber > 0 ? kmIdaReservaNumber : null,
-      p_valor_deslocamento: valorDeslocamentoReservaPreview,
+      p_valor_deslocamento: valorDeslocamentoReservaNumber,
     });
     setSavingDeslocamentoReserva(false);
     if (error) {
@@ -314,23 +338,6 @@ export default function EditarEventoModal({
         },
       },
     });
-  }
-
-  async function handleSalvarDeslocamento() {
-    if (!event.rental_id) return;
-    setSavingDeslocamento(true);
-    setDeslocamentoError(null);
-    const { error } = await supabase.rpc("definir_deslocamento_locacao", {
-      p_rental_id: event.rental_id,
-      p_km_ida: kmIdaNumber > 0 ? kmIdaNumber : null,
-      p_valor_deslocamento: valorDeslocamentoPreview,
-    });
-    setSavingDeslocamento(false);
-    if (error) {
-      setDeslocamentoError("Não foi possível salvar o deslocamento. Tente novamente.");
-      return;
-    }
-    onSaved();
   }
 
   if (contratoState) {
@@ -444,19 +451,20 @@ export default function EditarEventoModal({
 
               <div className="mt-3 rounded-xl border border-neutral-200 p-3 dark:border-neutral-700">
                 <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                  Deslocamento — km de ida (opcional)
+                  Ajuda de custo — deslocamento (opcional)
                 </label>
                 {loadingReservaDeslocamento ? (
                   <p className="text-xs text-neutral-400">Carregando...</p>
                 ) : (
                   <>
                     <div className="flex items-center gap-2">
+                      <span className="text-sm text-neutral-500 dark:text-neutral-400">R$</span>
                       <input
-                        inputMode="numeric"
-                        value={kmIdaReserva}
-                        onChange={(e) => setKmIdaReserva(e.target.value.replace(/\D/g, ""))}
-                        placeholder="0"
-                        className="w-28 rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                        inputMode="decimal"
+                        value={valorDeslocamentoReserva}
+                        onChange={(e) => setValorDeslocamentoReserva(e.target.value.replace(/[^\d,]/g, ""))}
+                        placeholder="0,00"
+                        className="w-24 rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
                       />
                       <button
                         onClick={handleSalvarDeslocamentoReserva}
@@ -466,16 +474,20 @@ export default function EditarEventoModal({
                         {savingDeslocamentoReserva ? "Salvando..." : "Salvar"}
                       </button>
                     </div>
-                    {valorDeslocamentoReservaPreview > 0 && (
-                      <p className="mt-1 text-xs text-neutral-500">
-                        {kmIdaReservaNumber} km ida · {kmIdaReservaNumber * 2} km ida e volta ={" "}
-                        <strong>{formatCurrency(valorDeslocamentoReservaPreview)}</strong>
-                      </p>
-                    )}
                     <p className="mt-1 text-xs text-neutral-400">
-                      Ajuda de custo que o cliente já pagou pelo deslocamento, mesmo antes do procedimento. Ao
-                      finalizar a reserva, este valor segue junto para a locação.
+                      Valor que o cliente já pagou pelo deslocamento, mesmo antes do procedimento. Ao finalizar a
+                      reserva, este valor segue junto para a locação.
                     </p>
+                    <label className="mb-1 mt-2 block text-xs font-medium text-neutral-500 dark:text-neutral-500">
+                      Km de ida (opcional, só para registro — não calcula o valor acima)
+                    </label>
+                    <input
+                      inputMode="numeric"
+                      value={kmIdaReserva}
+                      onChange={(e) => setKmIdaReserva(e.target.value.replace(/\D/g, ""))}
+                      placeholder="0"
+                      className="w-24 rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                    />
                   </>
                 )}
                 {deslocamentoReservaError && (
@@ -553,19 +565,20 @@ export default function EditarEventoModal({
 
           <div className="mb-4 rounded-xl border border-neutral-200 p-3 dark:border-neutral-700">
             <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
-              Deslocamento — km de ida (opcional)
+              Ajuda de custo — deslocamento (opcional)
             </label>
             {loadingRental ? (
               <p className="text-xs text-neutral-400">Carregando...</p>
             ) : (
               <>
                 <div className="flex items-center gap-2">
+                  <span className="text-sm text-neutral-500 dark:text-neutral-400">R$</span>
                   <input
-                    inputMode="numeric"
-                    value={kmIda}
-                    onChange={(e) => setKmIda(e.target.value.replace(/\D/g, ""))}
-                    placeholder="0"
-                    className="w-28 rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                    inputMode="decimal"
+                    value={valorDeslocamento}
+                    onChange={(e) => setValorDeslocamento(e.target.value.replace(/[^\d,]/g, ""))}
+                    placeholder="0,00"
+                    className="w-24 rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
                   />
                   <button
                     onClick={handleSalvarDeslocamento}
@@ -575,16 +588,20 @@ export default function EditarEventoModal({
                     {savingDeslocamento ? "Salvando..." : "Salvar"}
                   </button>
                 </div>
-                {valorDeslocamentoPreview > 0 && (
-                  <p className="mt-1 text-xs text-neutral-500">
-                    {kmIdaNumber} km ida · {kmIdaNumber * 2} km ida e volta ={" "}
-                    <strong>{formatCurrency(valorDeslocamentoPreview)}</strong>
-                  </p>
-                )}
                 <p className="mt-1 text-xs text-neutral-400">
-                  Ajuda de custo cobrada à parte do valor da locação, calculada em R$ 50 a cada 50 km de ida e volta.
+                  Valor que o cliente pagou de ajuda de custo pelo deslocamento, cobrado à parte do valor da locação.
                   Deixe em branco (ou zere) para remover um deslocamento lançado por engano.
                 </p>
+                <label className="mb-1 mt-2 block text-xs font-medium text-neutral-500 dark:text-neutral-500">
+                  Km de ida (opcional, só para registro — não calcula o valor acima)
+                </label>
+                <input
+                  inputMode="numeric"
+                  value={kmIda}
+                  onChange={(e) => setKmIda(e.target.value.replace(/\D/g, ""))}
+                  placeholder="0"
+                  className="w-24 rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                />
               </>
             )}
             {deslocamentoError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{deslocamentoError}</p>}
