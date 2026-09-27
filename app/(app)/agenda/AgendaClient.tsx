@@ -33,11 +33,15 @@ import AvailabilityImageModal from "@/components/AvailabilityImageModal";
 // "esverdeados"/claros); trocado o HIPRO 2 para rosa, que também liberou
 // o rosa que "Outro" usava antes — foi para o azul que sobrou do HIPRO 2.
 // Mentoria ganhou amarelo, uma cor que não existia ainda na paleta.
+// "outros" usava bg-brand-blue (#7EC8E3), parecido demais com o teal do
+// HIPRO 1 (#3DBFB8) num pontinho pequeno — trocado para o lilás da
+// paleta (brand-lilac), que já existe na identidade visual mas não era
+// usado em nenhum evento da Agenda, e fica bem distinto dos outros três.
 const EVENT_META: Record<string, { label: string; dot: string; hex: string }> = {
   hipro_1: { label: "HIPRO 1", dot: "bg-brand-teal", hex: "#3DBFB8" },
   hipro_2: { label: "HIPRO 2", dot: "bg-brand-pink", hex: "#E8789A" },
   mentoria: { label: "Mentoria", dot: "bg-yellow-400", hex: "#FACC15" },
-  outros: { label: "Outro", dot: "bg-brand-blue", hex: "#7EC8E3" },
+  outros: { label: "Outro", dot: "bg-brand-lilac", hex: "#B8A0D0" },
 };
 
 const WEEKDAY_LABELS = ["D", "S", "T", "Q", "Q", "S", "S"];
