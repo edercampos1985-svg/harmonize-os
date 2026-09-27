@@ -4,6 +4,8 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { ContratoDados } from "@/lib/contrato-pdf";
+import type { PricingConfig } from "@/lib/rental-pricing";
+import { DEFAULT_PRICING } from "@/lib/rental-pricing";
 
 const PAYMENT_LABELS: Record<string, string> = {
   pix: "PIX",
@@ -35,8 +37,10 @@ interface RentalParaContrato {
 interface ClienteParaContrato {
   id: string;
   name: string;
+  email?: string | null;
   document?: string | null;
   address?: string | null;
+  display_name?: string | null;
   contrato_nome?: string | null;
   contrato_endereco?: string | null;
 }
@@ -44,10 +48,15 @@ interface ClienteParaContrato {
 export default function GerarContratoModal({
   rental,
   client,
+  pricingConfig,
   onClose,
 }: {
   rental: RentalParaContrato;
   client: ClienteParaContrato;
+  // Precificação vigente (Configurações), usada para montar a cláusula
+  // de valor do contrato. Cai no fallback só se a página não tiver
+  // recebido a config real — não deve acontecer no uso normal.
+  pricingConfig?: PricingConfig;
   onClose: () => void;
 }) {
   const supabase = createClient();
@@ -57,6 +66,11 @@ export default function GerarContratoModal({
   const [nome, setNome] = useState(client.contrato_nome || client.name);
   const [documento, setDocumento] = useState(client.document ?? "");
   const [endereco, setEndereco] = useState(client.contrato_endereco || client.address || "");
+  // Quem assina pela parte contratante — por padrão a mesma pessoa do
+  // nome (ou o nome de exibição, se houver um mais curto). Só muda de
+  // fato quando o contratante é uma empresa e quem assina é outra pessoa.
+  const [responsavel, setResponsavel] = useState(client.display_name || client.contrato_nome || client.name);
+  const [email, setEmail] = useState(client.email ?? "");
   const [gerando, setGerando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,6 +85,10 @@ export default function GerarContratoModal({
       setError("Informe o CPF/CNPJ do contratante.");
       return;
     }
+    if (!responsavel.trim()) {
+      setError("Informe quem assina pelo contratante.");
+      return;
+    }
     setError(null);
     setGerando(true);
 
@@ -79,6 +97,8 @@ export default function GerarContratoModal({
         nome: nome.trim(),
         documento: documento.trim(),
         endereco: endereco.trim() || null,
+        responsavel: responsavel.trim(),
+        email: email.trim() || null,
       },
       equipamento: {
         nome: equipamentoNome,
@@ -91,6 +111,16 @@ export default function GerarContratoModal({
         shots: rental.shots,
         calculated_value: Number(rental.calculated_value),
         payment_method: rental.payment_method,
+      },
+      // Retrato da precificação vigente agora, para a cláusula de valor
+      // e para "baixar de novo" reproduzir o mesmo texto no futuro,
+      // mesmo que a config mude depois em Configurações.
+      precificacao: {
+        flatPackageLimit: (pricingConfig ?? DEFAULT_PRICING).flatPackageLimit,
+        flatPackageValue: (pricingConfig ?? DEFAULT_PRICING).flatPackageValue,
+        tier2Limit: (pricingConfig ?? DEFAULT_PRICING).tier2Limit,
+        tier2Rate: (pricingConfig ?? DEFAULT_PRICING).tier2Rate,
+        tier3Rate: (pricingConfig ?? DEFAULT_PRICING).tier3Rate,
       },
       gerado_em: new Date().toISOString(),
     };
@@ -165,6 +195,27 @@ export default function GerarContratoModal({
             <input
               value={endereco}
               onChange={(e) => setEndereco(e.target.value)}
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+              Responsável / Signatário
+            </label>
+            <input
+              value={responsavel}
+              onChange={(e) => setResponsavel(e.target.value)}
+              placeholder="Quem assina pelo contratante"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+              E-mail (opcional)
+            </label>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
           </div>
