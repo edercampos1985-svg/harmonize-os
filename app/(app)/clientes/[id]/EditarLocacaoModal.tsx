@@ -35,6 +35,9 @@ interface RentalToEdit {
   id: string;
   equipment_id: string;
   event_date: string;
+  // Leva W: data final quando a locação cobre mais de um dia. Nulo/
+  // ausente = locação de um dia só (o caso comum).
+  event_date_end?: string | null;
   shots: number;
   calculated_value: number;
   payment_method: string;
@@ -66,6 +69,11 @@ export default function EditarLocacaoModal({
   const supabase = createClient();
   const [equipmentId, setEquipmentId] = useState(rental.equipment_id);
   const [eventDate, setEventDate] = useState(rental.event_date);
+  // Leva W: período de vários dias. Nasce marcado se a locação já era um
+  // período (edição de uma locação existente); senão nasce fechado, já
+  // que é a exceção.
+  const [isPeriodo, setIsPeriodo] = useState(!!rental.event_date_end);
+  const [eventDateEnd, setEventDateEnd] = useState(rental.event_date_end ?? "");
   const [shots, setShots] = useState(String(rental.shots));
   const [valor, setValor] = useState(String(rental.calculated_value));
   const [paymentMethod, setPaymentMethod] = useState(rental.payment_method);
@@ -144,6 +152,10 @@ export default function EditarLocacaoModal({
       setError("Preencha equipamento, data, disparos e valor.");
       return;
     }
+    if (isPeriodo && (!eventDateEnd || eventDateEnd < eventDate)) {
+      setError("Informe uma data final válida (igual ou depois da data inicial).");
+      return;
+    }
     if (!window.confirm("Salvar essas alterações na locação?")) return;
     setSaving(true);
     setError(null);
@@ -172,6 +184,7 @@ export default function EditarLocacaoModal({
       p_payment_method: paymentMethod,
       p_status: status,
       p_notes: notes || null,
+      p_event_date_end: isPeriodo ? eventDateEnd : null,
     });
 
     setSaving(false);
@@ -228,6 +241,33 @@ export default function EditarLocacaoModal({
               onChange={(e) => setEventDate(e.target.value)}
               className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
+          </div>
+
+          <div>
+            <label className="flex items-center gap-2 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+              <input
+                type="checkbox"
+                checked={isPeriodo}
+                onChange={(e) => {
+                  setIsPeriodo(e.target.checked);
+                  if (!e.target.checked) setEventDateEnd("");
+                }}
+                className="h-4 w-4 rounded border-neutral-300 dark:border-neutral-700"
+              />
+              Locação de período (mais de um dia)
+            </label>
+            {isPeriodo && (
+              <div className="mt-2">
+                <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">Até</label>
+                <input
+                  type="date"
+                  value={eventDateEnd}
+                  min={eventDate}
+                  onChange={(e) => setEventDateEnd(e.target.value)}
+                  className="w-full max-w-[200px] rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                />
+              </div>
+            )}
           </div>
 
           <div>
