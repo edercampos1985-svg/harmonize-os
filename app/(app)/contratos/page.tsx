@@ -12,7 +12,7 @@ export default async function ContratosPage() {
 
   const { data: contratos } = await supabase
     .from("contratos_emitidos")
-    .select("id, gerado_em, dados, client_id, rental_id, clients(name)")
+    .select("id, gerado_em, dados, client_id, rental_id, reservation_id, clients(name)")
     .eq("is_test", false)
     .order("gerado_em", { ascending: false })
     .limit(TETO);
