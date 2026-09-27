@@ -37,6 +37,9 @@ interface Client {
 interface RentalRow {
   id: string;
   event_date: string;
+  // Leva W: data final quando a locação cobre mais de um dia. Nulo/ausente =
+  // locação de um dia só (o caso comum).
+  event_date_end?: string | null;
   shots: number;
   calculated_value: number;
   payment_method: string;
@@ -51,6 +54,16 @@ interface EquipmentOption {
   id: string;
   code: string;
   name: string;
+}
+
+// Leva W: mostra o período completo quando a locação cobre mais de um dia
+// (event_date_end preenchido e diferente da data inicial); senão mostra só a
+// data única, igual sempre foi.
+function formatPeriodo(r: RentalRow): string {
+  if (r.event_date_end && r.event_date_end !== r.event_date) {
+    return `${formatDate(r.event_date)} a ${formatDate(r.event_date_end)}`;
+  }
+  return formatDate(r.event_date);
 }
 
 // Abre um link numa aba nova. Eram tags de link comuns antes, mas botão
@@ -249,7 +262,7 @@ export default function ClienteDetailClient({
               <div>
                 <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{r.equipments?.name ?? "-"}</p>
                 <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
-                  {formatDate(r.event_date)} · {r.shots.toLocaleString("pt-BR")} disparos
+                  {formatPeriodo(r)} · {r.shots.toLocaleString("pt-BR")} disparos
                 </p>
               </div>
               <span
@@ -300,7 +313,7 @@ export default function ClienteDetailClient({
                 onClick={() => setEditingRental(r)}
                 className="cursor-pointer border-b border-neutral-100 last:border-0 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-800/50"
               >
-                <td className="whitespace-nowrap px-4 py-3 text-neutral-600 dark:text-neutral-400">{formatDate(r.event_date)}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-neutral-600 dark:text-neutral-400">{formatPeriodo(r)}</td>
                 <td className="px-4 py-3 text-neutral-900 dark:text-neutral-100">{r.equipments?.name ?? "-"}</td>
                 <td className="px-4 py-3 text-neutral-600 dark:text-neutral-400">{r.shots.toLocaleString("pt-BR")}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-right font-medium text-brand-teal">
