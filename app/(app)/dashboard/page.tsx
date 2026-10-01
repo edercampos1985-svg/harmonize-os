@@ -93,9 +93,22 @@ export default async function DashboardPage({
   // objetivo de um deles, mas somar dinheiro de cancelada não é.
   const { data: equipmentRentals } = await supabase
     .from("rentals_contabilizaveis")
-    .select("equipment_id, calculated_value")
+    .select("id, equipment_id, calculated_value")
     .gte("event_date", fromStr)
     .lte("event_date", toStr);
+
+  // Saldo em aberto por locação, para calcular o pendente de cada
+  // equipamento sem precisar duplicar a lógica de pagamento parcial que já
+  // vive na view rentals_situacao_pagamento.
+  const rentalIds = (equipmentRentals ?? []).map((r) => r.id);
+  const { data: situacoes } = rentalIds.length
+    ? await supabase
+        .from("rentals_situacao_pagamento")
+        .select("rental_id, saldo")
+        .in("rental_id", rentalIds)
+    : { data: [] as { rental_id: string; saldo: number }[] };
+
+  const saldoByRentalId = new Map((situacoes ?? []).map((s) => [s.rental_id, Number(s.saldo)]));
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const in7Str = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
@@ -213,8 +226,13 @@ export default async function DashboardPage({
       ...eq,
       locacoes: eqRentals.length,
       receita: eqRentals.reduce((sum, r) => sum + Number(r.calculated_value), 0),
+      pendente: eqRentals.reduce((sum, r) => sum + (saldoByRentalId.get(r.id) ?? 0), 0),
     };
   });
+
+  // Query string do período atual, repassada para a página de detalhe do
+  // equipamento, para que ela mantenha o mesmo filtro de datas do Dashboard.
+  const periodQuery = new URLSearchParams({ from: fromStr, to: toStr }).toString();
 
   return (
     <div className="space-y-6">
@@ -268,9 +286,10 @@ export default async function DashboardPage({
           <p className="mb-2 text-sm font-semibold text-neutral-700 dark:text-neutral-300">Equipamentos</p>
           <div className="grid grid-cols-2 gap-3">
             {equipmentSummary.map((eq) => (
-              <div
+              <Link
                 key={eq.id}
-                className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-xl dark:border-neutral-800/60 dark:bg-neutral-900/55"
+                href={`/dashboard/equipamentos/${eq.id}?${periodQuery}`}
+                className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-xl transition hover:border-brand-teal/40 hover:bg-white/90 dark:border-neutral-800/60 dark:bg-neutral-900/55 dark:hover:bg-neutral-900/75"
               >
                 <div className="flex items-center gap-2">
                   <span className={`h-2 w-2 rounded-full ${EQUIPMENT_COLORS[eq.code] ?? "bg-neutral-400"}`} />
@@ -280,7 +299,12 @@ export default async function DashboardPage({
                 <p className="text-xs text-neutral-500 dark:text-neutral-400">
                   {eq.locacoes} {eq.locacoes === 1 ? "locação" : "locações"} no período
                 </p>
-              </div>
+                {eq.pendente > 0 && (
+                  <p className="mt-1 text-xs font-medium text-amber-600 dark:text-amber-400">
+                    Pendente: {formatCurrency(eq.pendente)}
+                  </p>
+                )}
+              </Link>
             ))}
           </div>
         </div>
