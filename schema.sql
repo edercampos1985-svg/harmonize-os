@@ -387,6 +387,10 @@ create table public.rentals (
   -- muda em relação ao valor gravado anteriormente. Não é editado
   -- manualmente, fica registrado como fato histórico.
   rescheduled boolean not null default false,
+  -- Quando aconteceu o último reagendamento (a ação, não a nova data).
+  -- Gravado por reagendar_agendamento e pelo gatilho
+  -- rentals_marca_reagendamento (leva AB).
+  rescheduled_at timestamptz,
   transaction_id uuid references transactions(id),
   notes text,
   created_by uuid references profiles(id),
@@ -489,6 +493,11 @@ create table public.calendar_events (
   -- finalize_rental_reservation finaliza esta reserva.
   km_ida numeric(8,2),
   valor_deslocamento numeric(10,2) not null default 0,
+  -- Leva AB: marca de reagendado no próprio agendamento, para valer
+  -- também em pré-reserva sem locação. rescheduled_at é quando a ação
+  -- aconteceu, não a nova data.
+  rescheduled boolean not null default false,
+  rescheduled_at timestamptz,
   check (date_end >= date_start)
 );
 
@@ -1688,15 +1697,22 @@ begin
     end if;
   end if;
 
+  -- A marca de reagendado vive em calendar_events, independente de já
+  -- existir locação ou não (pré-reserva reagendada também conta).
+  -- rescheduled_at registra QUANDO a ação aconteceu, que é o que o
+  -- Dashboard usa para contar "reagendado no período".
   update calendar_events
      set date_start = p_nova_data,
-         date_end   = p_nova_data
+         date_end   = p_nova_data,
+         rescheduled = true,
+         rescheduled_at = now()
    where id = p_event_id;
 
   if v_rental_id is not null then
     update rentals
        set event_date = p_nova_data,
-           rescheduled = true
+           rescheduled = true,
+           rescheduled_at = now()
      where id = v_rental_id;
 
     update transactions
@@ -1720,6 +1736,29 @@ end;
 $$;
 
 grant execute on function public.reagendar_agendamento to authenticated;
+
+-- Qualquer caminho que mude a data de uma locação (hoje: update_rental,
+-- pela tela "Editar locação") passa a deixar gravado quando isso
+-- aconteceu. Se quem fez a mudança já gravou rescheduled_at na mesma
+-- operação (reagendar_agendamento), o gatilho não mexe.
+create or replace function public.trg_rentals_marca_reagendamento()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.event_date is distinct from old.event_date
+     and new.rescheduled_at is not distinct from old.rescheduled_at then
+    new.rescheduled := true;
+    new.rescheduled_at := now();
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists rentals_marca_reagendamento on public.rentals;
+create trigger rentals_marca_reagendamento
+  before update of event_date on public.rentals
+  for each row execute function public.trg_rentals_marca_reagendamento();
 
 -- Marcar como realizado (o procedimento aconteceu) e desfazer. Não diz
 -- nada sobre pagamento — ver marcar_locacao_paga/rentals.pago, é essa a
