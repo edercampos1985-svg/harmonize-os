@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatCurrency, formatDate } from "@/lib/format";
 import EquipamentoStatusControl from "@/components/EquipamentoStatusControl";
 import EquipamentoInfoControl from "@/components/EquipamentoInfoControl";
+import EquipamentoPrevistasControl from "@/components/EquipamentoPrevistasControl";
 
 const EQUIPMENT_COLORS: Record<string, string> = {
   hipro_1: "bg-brand-teal",
@@ -56,6 +57,24 @@ export default async function EquipamentosPage() {
     clients: Array.isArray(e.clients) ? (e.clients[0] ?? null) : (e.clients ?? null),
   }));
 
+  // Locações previstas: só status "agendada" ou "confirmada", ainda não
+  // realizadas, de hoje em diante — usadas no card para o gestor saber
+  // quantas locações já marcadas vão virar receita, e quais clientes são.
+  const { data: previstasRaw } = await supabase
+    .from("rentals")
+    .select("id, equipment_id, event_date, client_id, clients(name)")
+    .eq("is_test", false)
+    .in("status", ["agendada", "confirmada"])
+    .gte("event_date", today)
+    .order("event_date", { ascending: true });
+
+  const normalizedPrevistas = (previstasRaw ?? []).map((r: any) => ({
+    id: r.id as string,
+    equipment_id: r.equipment_id as string,
+    event_date: r.event_date as string,
+    client_name: (Array.isArray(r.clients) ? r.clients[0]?.name : r.clients?.name) ?? null,
+  }));
+
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">Equipamentos</h1>
@@ -67,6 +86,7 @@ export default async function EquipamentosPage() {
           const receitaTotal = eqRentals.reduce((sum, r) => sum + Number(r.calculated_value), 0);
           const pendenteTotal = eqRentals.reduce((sum, r) => sum + (saldoByRentalId.get(r.id) ?? 0), 0);
           const nextEvent = normalizedUpcoming.find((e) => e.equipment_id === eq.id);
+          const eqPrevistas = normalizedPrevistas.filter((p) => p.equipment_id === eq.id);
 
           return (
             <div key={eq.id} className="rounded-2xl border border-white/60 bg-white/70 p-5 shadow-sm backdrop-blur-xl dark:border-neutral-800/60 dark:bg-neutral-900/55">
@@ -115,6 +135,10 @@ export default async function EquipamentosPage() {
                       Pendente: {formatCurrency(pendenteTotal)}
                     </p>
                   )}
+                </div>
+                <div>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">Locações previstas</p>
+                  <EquipamentoPrevistasControl items={eqPrevistas} />
                 </div>
                 <div className="col-span-2">
                   <p className="text-xs text-neutral-500 dark:text-neutral-400">Número de série</p>
