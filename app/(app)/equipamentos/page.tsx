@@ -57,21 +57,22 @@ export default async function EquipamentosPage() {
     clients: Array.isArray(e.clients) ? (e.clients[0] ?? null) : (e.clients ?? null),
   }));
 
-  // Locações previstas: só status "agendada" ou "confirmada", ainda não
-  // realizadas, de hoje em diante — usadas no card para o gestor saber
-  // quantas locações já marcadas vão virar receita, e quais clientes são.
+  // Locações previstas: eventos do calendário com status "pre_reserva",
+  // ainda não realizados, de hoje em diante — usadas no card para o
+  // gestor saber quantas pré-reservas vão virar locação, e quais
+  // clientes são.
   const { data: previstasRaw } = await supabase
-    .from("rentals")
-    .select("id, equipment_id, event_date, client_id, clients(name)")
-    .eq("is_test", false)
-    .in("status", ["agendada", "confirmada"])
-    .gte("event_date", today)
-    .order("event_date", { ascending: true });
+    .from("calendar_events")
+    .select("id, equipment_id, date_start, client_id, clients(name)")
+    .eq("status", "pre_reserva")
+    .gte("date_start", today)
+    .not("equipment_id", "is", null)
+    .order("date_start", { ascending: true });
 
   const normalizedPrevistas = (previstasRaw ?? []).map((r: any) => ({
     id: r.id as string,
     equipment_id: r.equipment_id as string,
-    event_date: r.event_date as string,
+    event_date: r.date_start as string,
     client_name: (Array.isArray(r.clients) ? r.clients[0]?.name : r.clients?.name) ?? null,
   }));
 
