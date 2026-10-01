@@ -8,6 +8,7 @@ export default async function AgendaHojePage() {
 
   const hojeStr = new Date().toISOString().slice(0, 10);
 
+  // Locações já finalizadas (com disparos/valor lançados) a partir de hoje.
   const { data: rentals } = await supabase
     .from("rentals")
     .select("id, event_date, event_date_end, clients(name)")
@@ -17,29 +18,64 @@ export default async function AgendaHojePage() {
     .order("event_date", { ascending: true })
     .limit(50);
 
-  const lista = rentals ?? [];
+  // Pré-reservas ("Agendar sem disparos") que ainda não viraram locação —
+  // ficam em calendar_events, não em rentals, e são justamente os
+  // "próximos agendamentos" que ainda não têm disparos contados.
+  const { data: preReservas } = await supabase
+    .from("calendar_events")
+    .select("id, date_start, date_end, clients(name)")
+    .eq("status", "pre_reserva")
+    .is("rental_id", null)
+    .gte("date_start", hojeStr)
+    .order("date_start", { ascending: true })
+    .limit(50);
+
+  const listaRentals = (rentals ?? []).map((r: any) => ({
+    id: `rental-${r.id}`,
+    data_inicio: r.event_date,
+    data_fim: r.event_date_end,
+    cliente: Array.isArray(r.clients) ? (r.clients[0]?.name ?? null) : (r.clients?.name ?? null),
+    pendente: false,
+  }));
+
+  const listaPreReservas = (preReservas ?? []).map((r: any) => ({
+    id: `reserva-${r.id}`,
+    data_inicio: r.date_start,
+    data_fim: r.date_end,
+    cliente: Array.isArray(r.clients) ? (r.clients[0]?.name ?? null) : (r.clients?.name ?? null),
+    pendente: true,
+  }));
+
+  const lista = [...listaRentals, ...listaPreReservas].sort((a, b) =>
+    a.data_inicio.localeCompare(b.data_inicio)
+  );
 
   return (
     <div className="min-h-screen bg-neutral-50 p-4">
-      <h1 className="mb-4 text-lg font-semibold text-neutral-900">Próximas locações</h1>
+      <h1 className="mb-4 text-lg font-semibold text-neutral-900">Próximos agendamentos</h1>
 
       {lista.length === 0 && (
-        <p className="text-sm text-neutral-400">Nenhuma locação futura.</p>
+        <p className="text-sm text-neutral-400">Nenhum agendamento futuro.</p>
       )}
 
       <ul className="space-y-2">
-        {lista.map((r: any) => (
+        {lista.map((r) => (
           <li
             key={r.id}
             className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm"
           >
-            <p className="text-sm font-medium text-neutral-900">
-              {r.clients?.name ?? "-"}
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-neutral-900">{r.cliente ?? "-"}</p>
+              {r.pendente && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                  sem disparos ainda
+                </span>
+              )}
+            </div>
             <p className="text-xs text-neutral-500">
-              {r.event_date_end && r.event_date_end !== r.event_date
-                ? `${formatDate(r.event_date)} a ${formatDate(r.event_date_end)}`
-                : formatDate(r.event_date)}
+              {r.data_fim && r.data_fim !== r.data_inicio
+                ? `${formatDate(r.data_inicio)} a ${formatDate(r.data_fim)}`
+                : formatDate(r.data_inicio)}
             </p>
           </li>
         ))}
