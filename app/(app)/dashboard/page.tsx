@@ -67,6 +67,13 @@ export default async function DashboardPage({
   // Reagendadas: soma rentals.rescheduled (locações já formalizadas) com
   // calendar_events.rescheduled de reservas que ainda não viraram rental
   // (rental_id nulo) — a mesma lacuna corrigida no modal do Funil.
+  // Conta pela data em que o reagendamento ACONTECEU (rescheduled_at),
+  // não pela data para onde o evento foi. rescheduled_at tem hora, então
+  // o recorte cobre o dia inteiro no fuso de Brasília: comparar com
+  // `to` direto (meia-noite UTC) deixava de fora quase todo o último dia
+  // do período, e um período de um dia só ("hoje") contava zero.
+  const reagendadoDesde = `${fromStr}T00:00:00-03:00`;
+  const reagendadoAte = `${toStr}T23:59:59.999-03:00`;
   const [{ count: concluidasCount }, { count: canceladasCount }, rescheduledRentalsRes, rescheduledEventsRes] =
     await Promise.all([
       supabase
@@ -89,16 +96,16 @@ export default async function DashboardPage({
         .select("id", { count: "exact", head: true })
         .eq("rescheduled", true)
         .eq("is_test", false)
-        .gte("rescheduled_at", fromStr)
-        .lte("rescheduled_at", to.toISOString()),
+        .gte("rescheduled_at", reagendadoDesde)
+        .lte("rescheduled_at", reagendadoAte),
       supabase
         .from("calendar_events")
         .select("id", { count: "exact", head: true })
         .eq("rescheduled", true)
         .eq("is_test", false)
         .is("rental_id", null)
-        .gte("rescheduled_at", fromStr)
-        .lte("rescheduled_at", to.toISOString()),
+        .gte("rescheduled_at", reagendadoDesde)
+        .lte("rescheduled_at", reagendadoAte),
     ]);
 
   const reagendadasCount = (rescheduledRentalsRes.count ?? 0) + (rescheduledEventsRes.count ?? 0);
