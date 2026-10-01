@@ -23,6 +23,7 @@ export default async function DashboardPage({
   const { from, to } = resolvePeriod(searchParams.period, searchParams.from, searchParams.to);
   const fromStr = from.toISOString().slice(0, 10);
   const toStr = to.toISOString().slice(0, 10);
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   // O Dashboard é tela de decisão, então registro de teste não entra em
   // nenhum número. Onde a consulta lê de uma view _contabilizaveis, esse
@@ -60,12 +61,16 @@ export default async function DashboardPage({
     .gte("event_date", fromStr)
     .lte("event_date", toStr);
 
+  // Concluídas: evento no passado (antes de hoje) e não cancelado — não
+  // depende do status estar manualmente marcado como "realizada", porque
+  // na prática esse campo raramente é atualizado depois que a data passa.
   const [{ count: concluidasCount }, { count: canceladasCount }, { count: reagendadasCount }] = await Promise.all([
     supabase
       .from("rentals")
       .select("id", { count: "exact", head: true })
-      .eq("status", "realizada")
+      .neq("status", "cancelada")
       .eq("is_test", false)
+      .lt("event_date", todayStr)
       .gte("event_date", fromStr)
       .lte("event_date", toStr),
     supabase
@@ -110,7 +115,6 @@ export default async function DashboardPage({
 
   const saldoByRentalId = new Map((situacoes ?? []).map((s) => [s.rental_id, Number(s.saldo)]));
 
-  const todayStr = new Date().toISOString().slice(0, 10);
   const in7Str = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
   const { count: pendingConfirmations } = await supabase
     .from("calendar_events")
