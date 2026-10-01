@@ -50,6 +50,14 @@ interface RentalToEdit {
   valor_deslocamento?: number;
 }
 
+interface RentalPayment {
+  id: string;
+  forma: string;
+  valor: number;
+  data: string;
+  pix_conta: string | null;
+}
+
 export default function EditarLocacaoModal({
   rental,
   equipments,
@@ -81,7 +89,6 @@ export default function EditarLocacaoModal({
   const [eventDateEnd, setEventDateEnd] = useState(rental.event_date_end ?? "");
   const [shots, setShots] = useState(String(rental.shots));
   const [valor, setValor] = useState(String(rental.calculated_value));
-  const [paymentMethod, setPaymentMethod] = useState(rental.payment_method);
   const [status, setStatus] = useState(rental.status);
   const [notes, setNotes] = useState(rental.notes ?? "");
   // Leva O/Y/Z: deslocamento (ajuda de custo) — valor digitado direto (é o
@@ -143,6 +150,88 @@ export default function EditarLocacaoModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ------------------------------------------------------------
+  // Pagamentos (leva O): registra/remove pagamentos parciais desta
+  // locação, via RPCs que já criam/apagam a transação no caixa junto.
+  // rentals.pago/pago_em são recalculados automaticamente pelo banco a
+  // cada mudança — nunca setados diretamente por aqui.
+  // ------------------------------------------------------------
+  const [payments, setPayments] = useState<RentalPayment[]>([]);
+  const [loadingPayments, setLoadingPayments] = useState(true);
+  const [saldoDevedor, setSaldoDevedor] = useState<number | null>(null);
+
+  const [novoValor, setNovoValor] = useState("");
+  const [novaForma, setNovaForma] = useState("pix");
+  const [novaPixConta, setNovaPixConta] = useState("harmonize");
+  const [addingPayment, setAddingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+
+  async function carregarPagamentos() {
+    setLoadingPayments(true);
+    const [{ data: pagamentos }, { data: situacao }] = await Promise.all([
+      supabase
+        .from("rental_payments")
+        .select("id, forma, valor, data, pix_conta")
+        .eq("rental_id", rental.id)
+        .order("data", { ascending: false }),
+      supabase
+        .from("rentals_situacao_pagamento")
+        .select("saldo")
+        .eq("rental_id", rental.id)
+        .maybeSingle(),
+    ]);
+    setPayments(pagamentos ?? []);
+    setSaldoDevedor(situacao?.saldo ?? null);
+    setLoadingPayments(false);
+  }
+
+  useEffect(() => {
+    carregarPagamentos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleAddPayment() {
+    const valorNumber = Number(novoValor.replace(",", "."));
+    if (!valorNumber || valorNumber <= 0) {
+      setPaymentError("Informe um valor válido.");
+      return;
+    }
+    setAddingPayment(true);
+    setPaymentError(null);
+
+    const { error: rpcError } = await supabase.rpc("registrar_pagamento_locacao", {
+      p_rental_id: rental.id,
+      p_forma: novaForma,
+      p_valor: valorNumber,
+      p_pix_conta: novaForma === "pix" ? novaPixConta : null,
+    });
+
+    setAddingPayment(false);
+
+    if (rpcError) {
+      setPaymentError(rpcError.message || "Não foi possível registrar o pagamento.");
+      return;
+    }
+
+    setNovoValor("");
+    await carregarPagamentos();
+    onSaved();
+  }
+
+  async function handleRemovePayment(paymentId: string) {
+    if (!window.confirm("Remover este pagamento? O lançamento no caixa também será apagado.")) return;
+    setPaymentError(null);
+    const { error: rpcError } = await supabase.rpc("remover_pagamento_locacao", {
+      p_payment_id: paymentId,
+    });
+    if (rpcError) {
+      setPaymentError(rpcError.message || "Não foi possível remover o pagamento.");
+      return;
+    }
+    await carregarPagamentos();
+    onSaved();
+  }
+
   const shotsNumber = Number(shots.replace(/\D/g, ""));
 
   const suggestedValue = useMemo(() => {
@@ -197,7 +286,7 @@ export default function EditarLocacaoModal({
       p_event_date: eventDate,
       p_shots: shotsNumber,
       p_calculated_value: valorNumber,
-      p_payment_method: paymentMethod,
+      p_payment_method: rental.payment_method,
       p_status: status,
       p_notes: notes || null,
       p_event_date_end: isPeriodo ? eventDateEnd : null,
@@ -336,19 +425,89 @@ export default function EditarLocacaoModal({
             </p>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">Forma de pagamento</label>
-            <select
-              value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value)}
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
-            >
-              {PAYMENT_METHODS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+          {/* Pagamentos (leva O): lista o que já foi recebido e permite
+              lançar novos valores (parciais ou o restante), em formas
+              diferentes, sem travar a locação como "paga" até o saldo
+              zerar. Substitui o antigo campo único "Forma de pagamento". */}
+          <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-700">
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Pagamentos recebidos</label>
+              {saldoDevedor !== null && (
+                <span className={`text-xs font-semibold ${saldoDevedor > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                  {saldoDevedor > 0 ? `Saldo em aberto: ${formatCurrency(saldoDevedor)}` : "Quitada"}
+                </span>
+              )}
+            </div>
+
+            {loadingPayments ? (
+              <p className="text-xs text-neutral-400">Carregando...</p>
+            ) : payments.length === 0 ? (
+              <p className="text-xs text-neutral-400">Nenhum pagamento lançado ainda.</p>
+            ) : (
+              <ul className="mb-2 space-y-1">
+                {payments.map((p) => (
+                  <li key={p.id} className="flex items-center justify-between text-sm text-neutral-700 dark:text-neutral-300">
+                    <span>
+                      {formatCurrency(p.valor)} — {PAYMENT_METHODS.find((m) => m.value === p.forma)?.label ?? p.forma}
+                      {p.pix_conta ? ` (${p.pix_conta})` : ""} · {new Date(p.data + "T00:00:00").toLocaleDateString("pt-BR")}
+                    </span>
+                    <button
+                      onClick={() => handleRemovePayment(p.id)}
+                      className="text-xs text-red-500 underline underline-offset-2"
+                    >
+                      remover
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <label className="mb-1 block text-xs text-neutral-500">Valor</label>
+                <input
+                  inputMode="decimal"
+                  value={novoValor}
+                  onChange={(e) => setNovoValor(e.target.value)}
+                  placeholder="0,00"
+                  className="w-full rounded-lg border border-neutral-300 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="mb-1 block text-xs text-neutral-500">Forma</label>
+                <select
+                  value={novaForma}
+                  onChange={(e) => setNovaForma(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
+                >
+                  {PAYMENT_METHODS.map((p) => (
+                    <option key={p.value} value={p.value}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+              {novaForma === "pix" && (
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs text-neutral-500">Conta</label>
+                  <select
+                    value={novaPixConta}
+                    onChange={(e) => setNovaPixConta(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
+                  >
+                    <option value="eder">Eder</option>
+                    <option value="harmonize">Harmonize</option>
+                    <option value="laser_dream">Laser Dream</option>
+                  </select>
+                </div>
+              )}
+              <button
+                onClick={handleAddPayment}
+                disabled={addingPayment}
+                className="rounded-lg bg-brand-gradient px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+              >
+                {addingPayment ? "..." : "+ Add"}
+              </button>
+            </div>
+            {paymentError && <p className="mt-2 text-xs text-red-500">{paymentError}</p>}
           </div>
 
           <div>
