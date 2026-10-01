@@ -27,19 +27,10 @@ interface EventToEdit {
   rental_id: string | null;
   notes?: string | null;
   clients?: { name: string; whatsapp?: string | null } | null;
-  // Estado atual da taxa deste agendamento (nao_aplica/pendente/paga/
-  // perdida), repassado direto para a CalculadoraLocacaoModal (mode
-  // "finalize") decidir o que oferecer.
   taxa_status?: string | null;
-  // Reserva de HIPRO 1/2 marcada como mentoria (leva K) — muda o texto
-  // desta tela e faz a CalculadoraLocacaoModal cobrar por paciente modelo
-  // em vez de por disparo (leva M/N).
   is_mentoria?: boolean;
 }
 
-// Dados mínimos de equipamento e cliente para o contrato, buscados sob
-// demanda aqui (a Agenda não carrega esses campos na lista principal,
-// que só precisa do nome do equipamento e do cliente para os cards).
 interface EquipamentoContratoInfo {
   name: string;
   serial_number?: string | null;
@@ -57,10 +48,6 @@ interface ClienteContratoInfo {
   contrato_endereco?: string | null;
 }
 
-// Dados completos da locação (leva Z), buscados sob demanda quando o
-// evento vem de uma locação já lançada: a Agenda só carrega rental_id,
-// não o resto — precisa disso tanto para "Gerar contrato" quanto para o
-// campo de deslocamento.
 interface RentalDetails {
   id: string;
   event_date: string;
@@ -97,17 +84,9 @@ export default function EditarEventoModal({
   const isRentalEvent = !!event.rental_id;
   const isPendingReservation = !isRentalEvent && !!event.equipment_id && (event.status ?? "pre_reserva") === "pre_reserva";
 
-  // Todos os hooks ficam aqui em cima, antes de qualquer return condicional
-  // (regras de hooks do React: mesma quantidade e ordem em toda renderização,
-  // independente de qual ramo — pendente, locação ou evento genérico — está
-  // sendo mostrado). Cada ramo só usa o subconjunto que precisa.
   const [showFinalize, setShowFinalize] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
-  // Leva S: cancelar passa a pedir motivo/não-comparecimento e a ir pela
-  // RPC cancelar_agendamento (bloqueia se já foi paga, vira taxa perdida
-  // se a taxa estava paga) em vez do update direto de antes, que pulava
-  // essas duas regras.
   const [showCancelForm, setShowCancelForm] = useState(false);
   const [cancelMotivo, setCancelMotivo] = useState("");
   const [cancelNoShow, setCancelNoShow] = useState(false);
@@ -120,25 +99,40 @@ export default function EditarEventoModal({
   const [error, setError] = useState<string | null>(null);
   const [confirmarExclusao, setConfirmarExclusao] = useState(false);
 
-  // Leva Z: "Gerar contrato" acessível direto da Agenda (antes só existia
-  // na ficha do cliente), tanto para pré-reserva quanto para locação já
-  // lançada — reaproveitando o mesmo GerarContratoModal/OrigemContrato de
-  // lá, só buscando aqui os dados que a Agenda não carrega de cara.
+  // Reagendar (só para pré-reserva): troca a data sem cancelar nada, via
+  // RPC reagendar_agendamento — mesma função já usada na ficha do cliente.
+  const [showReagendar, setShowReagendar] = useState(false);
+  const [novaData, setNovaData] = useState(event.date_start);
+  const [reagendando, setReagendando] = useState(false);
+  const [reagendarError, setReagendarError] = useState<string | null>(null);
+
+  async function handleReagendar() {
+    if (!novaData) {
+      setReagendarError("Escolha a nova data.");
+      return;
+    }
+    setReagendando(true);
+    setReagendarError(null);
+    const { error } = await supabase.rpc("reagendar_agendamento", {
+      p_event_id: event.id,
+      p_nova_data: novaData,
+    });
+    setReagendando(false);
+    if (error) {
+      setReagendarError(error.message || "Não foi possível reagendar. Tente novamente.");
+      return;
+    }
+    onSaved();
+  }
+
   const [contratoState, setContratoState] = useState<{ origem: OrigemContrato; client: ClienteContratoInfo } | null>(
     null
   );
   const [loadingContrato, setLoadingContrato] = useState(false);
   const [contratoError, setContratoError] = useState<string | null>(null);
 
-  // Leva Z: dados completos da locação, só existem quando o evento vem de
-  // uma locação já lançada — buscados uma vez ao abrir, porque tanto o
-  // contrato quanto o campo de deslocamento abaixo precisam deles.
   const [rentalDetails, setRentalDetails] = useState<RentalDetails | null>(null);
   const [loadingRental, setLoadingRental] = useState(false);
-  // Leva Z (correção): o valor da ajuda de custo é digitado direto — quase
-  // nunca dá pra saber o km exato de cabeça, mas o valor que o cliente
-  // pagou (ex: R$500) sim. Km fica como campo separado, só para registro/
-  // histórico, sem calcular nada a partir dele nem ser calculado por ele.
   const [valorDeslocamento, setValorDeslocamento] = useState("");
   const [kmIda, setKmIda] = useState("");
   const [savingDeslocamento, setSavingDeslocamento] = useState(false);
@@ -196,11 +190,6 @@ export default function EditarEventoModal({
     onSaved();
   }
 
-  // Leva Z: o deslocamento também precisa poder ser lançado já na
-  // pré-reserva, antes de existir uma locação — o cliente pode pagar a
-  // ajuda de custo adiantado. Busca o que já foi lançado nesta reserva
-  // (a Agenda não carrega isso na lista principal) e, se ainda nada foi
-  // lançado, começa em branco.
   const [loadingReservaDeslocamento, setLoadingReservaDeslocamento] = useState(false);
   const [valorDeslocamentoReserva, setValorDeslocamentoReserva] = useState("");
   const [kmIdaReserva, setKmIdaReserva] = useState("");
@@ -432,6 +421,37 @@ export default function EditarEventoModal({
                 </button>
               </div>
             </div>
+          ) : showReagendar ? (
+            <div className="rounded-xl border border-brand-teal/40 p-3">
+              <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                Nova data
+              </label>
+              <input
+                type="date"
+                value={novaData}
+                onChange={(e) => setNovaData(e.target.value)}
+                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              />
+              {reagendarError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{reagendarError}</p>}
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowReagendar(false);
+                    setReagendarError(null);
+                  }}
+                  className="flex-1 rounded-xl border border-neutral-300 py-2 text-xs font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
+                >
+                  Voltar
+                </button>
+                <button
+                  onClick={handleReagendar}
+                  disabled={reagendando}
+                  className="flex-1 rounded-xl bg-brand-gradient py-2 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {reagendando ? "Movendo..." : "Mover para esta data"}
+                </button>
+              </div>
+            </div>
           ) : (
             <>
               <div className="flex gap-2">
@@ -448,6 +468,16 @@ export default function EditarEventoModal({
                   {event.is_mentoria ? "Finalizar mentoria" : "Finalizar com disparos"}
                 </button>
               </div>
+
+              <button
+                onClick={() => {
+                  setShowReagendar(true);
+                  setNovaData(event.date_start);
+                }}
+                className="mt-3 w-full rounded-xl border border-brand-teal py-2.5 text-sm font-medium text-brand-teal"
+              >
+                Reagendar
+              </button>
 
               <div className="mt-3 rounded-xl border border-neutral-200 p-3 dark:border-neutral-700">
                 <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
@@ -527,11 +557,6 @@ export default function EditarEventoModal({
     if (!window.confirm("Salvar essas alterações no evento?")) return;
     setSaving(true);
     setError(null);
-    // Não altera event_type aqui: este ramo é só para evento genérico
-    // sem equipamento ("outros" daqui em diante, ou um "mentoria" antigo
-    // já existente antes desta trava). Mentoria nova sempre passa por
-    // "Reservar HIPRO" (ver NovoEventoModal e ReservarHiproModal) para
-    // manter o bloqueio de agenda pela constraint no_equipment_double_booking.
     const { error } = await supabase
       .from("calendar_events")
       .update({
@@ -711,9 +736,6 @@ export default function EditarEventoModal({
           Excluir evento
         </button>
 
-        {/* Evento que pertence a uma locação faz a exclusão subir para a
-            locação inteira, com o lançamento financeiro junto. A prévia
-            avisa isso antes de confirmar. */}
         {confirmarExclusao && (
           <ConfirmarExclusaoModal
             table="calendar_events"
