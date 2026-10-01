@@ -90,7 +90,7 @@ export default async function DashboardPage({
         .eq("rescheduled", true)
         .eq("is_test", false)
         .gte("rescheduled_at", fromStr)
-        .lte("rescheduled_at", toStr),
+        .lte("rescheduled_at", to.toISOString()),
       supabase
         .from("calendar_events")
         .select("id", { count: "exact", head: true })
@@ -98,7 +98,7 @@ export default async function DashboardPage({
         .eq("is_test", false)
         .is("rental_id", null)
         .gte("rescheduled_at", fromStr)
-        .lte("rescheduled_at", toStr),
+        .lte("rescheduled_at", to.toISOString()),
     ]);
 
   const reagendadasCount = (rescheduledRentalsRes.count ?? 0) + (rescheduledEventsRes.count ?? 0);
