@@ -65,6 +65,16 @@ export default async function ClienteDetailPage({ params }: { params: { id: stri
     equipments: Array.isArray(r.equipments) ? (r.equipments[0] ?? null) : (r.equipments ?? null),
   }));
 
+  // Pré-reservas reagendadas não aparecem em `rentals` (ainda não têm
+  // rental_id), então contamos à parte em calendar_events — só onde
+  // rental_id é nulo, pra não contar de novo o que já virou locação.
+  const { count: reagendadasPreReservaCount } = await supabase
+    .from("calendar_events")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", params.id)
+    .eq("rescheduled", true)
+    .is("rental_id", null);
+
   return (
     <ClienteDetailClient
       client={client}
@@ -75,6 +85,7 @@ export default async function ClienteDetailPage({ params }: { params: { id: stri
       equipments={equipments ?? []}
       pricingConfig={settings.pricing}
       reservationFee={settings.reservationFee}
+      reagendadasPreReservaCount={reagendadasPreReservaCount ?? 0}
     />
   );
 }
