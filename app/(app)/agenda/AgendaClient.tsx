@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import {
   addMonths,
   eachDayOfInterval,
@@ -441,6 +442,12 @@ export default function AgendaClient({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">Agenda</h1>
         <div className="flex gap-2 self-start sm:self-auto">
+          <Link
+            href="/agenda-hoje"
+            className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
+          >
+            Próximas locações
+          </Link>
           <button
             onClick={() => setAvailabilityOpen(true)}
             className="rounded-xl border border-brand-teal px-3 py-1.5 text-xs font-medium text-brand-teal"
