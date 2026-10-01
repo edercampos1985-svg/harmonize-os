@@ -102,6 +102,7 @@ export default function ClienteDetailClient({
   equipments,
   pricingConfig,
   reservationFee,
+  reagendadasPreReservaCount,
 }: {
   client: Client;
   rentals: RentalRow[];
@@ -118,6 +119,9 @@ export default function ClienteDetailClient({
   equipments: EquipmentOption[];
   pricingConfig?: PricingConfig;
   reservationFee?: number;
+  // Pré-reservas reagendadas (ainda sem rental_id) contadas no servidor
+  // em calendar_events, somadas às de `rentals` para o badge "reagendadas".
+  reagendadasPreReservaCount: number;
 }) {
   const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
@@ -135,7 +139,7 @@ export default function ClienteDetailClient({
   const ultimaLocacao = rentals[0]?.event_date;
   const concluidas = rentals.filter((r) => r.status === "realizada").length;
   const canceladas = rentals.filter((r) => r.status === "cancelada").length;
-  const reagendadas = rentals.filter((r) => r.rescheduled).length;
+  const reagendadas = rentals.filter((r) => r.rescheduled).length + reagendadasPreReservaCount;
 
   function handleCreated() {
     setModalOpen(false);
