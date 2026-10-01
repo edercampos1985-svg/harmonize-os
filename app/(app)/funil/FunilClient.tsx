@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -47,10 +47,6 @@ export interface LeadRow {
   address: string | null;
   whatsapp: string | null;
   stage: StageKey;
-  // Independente da etapa: uma vez true, mudar "stage" nunca volta isso
-  // pra false sozinho (é o próprio gatilho do banco que garante isso,
-  // ver migration da leva F). A etapa mostra onde a negociação atual
-  // está; is_client mostra se esse contato já converteu alguma vez.
   is_client?: boolean;
   data_evento: string | null;
   tags: TagOption[];
@@ -59,14 +55,9 @@ export interface LeadRow {
   parceiro?: boolean;
   treatment?: string | null;
   display_name?: string | null;
-  // A taxa não é mais um campo do cliente: cada data reservada tem a
-  // sua, e estes três números vêm da view clientes_taxas.
   taxasPendentes: number;
   taxasPagas: number;
   valorPendente: number;
-  // id e confirmation_message_sent_at entraram com a leva F, para o botão
-  // "Pedir confirmação no WhatsApp" (igual à Agenda) sempre operar na
-  // reserva exata, nunca por client_id+data.
   nextEvent: {
     id: string;
     date_start: string;
@@ -77,7 +68,6 @@ export interface LeadRow {
 
 export interface TaskRow {
   id: string;
-  // Tarefa manual pode não ter cliente vinculado (tarefa solta).
   client_id: string | null;
   client_name: string | null;
   type: "contato_inicial" | "followup" | "manual";
@@ -91,7 +81,6 @@ function formatDiaMes(iso: string) {
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// Abre o link do WhatsApp numa aba nova (mesmo helper de AgendaClient.tsx).
 function openInNewTab(url: string) {
   const opened = window.open(url, "_blank", "noopener,noreferrer");
   if (!opened) window.location.href = url;
@@ -120,17 +109,11 @@ export default function FunilClient({
   const [tasksAlertOpen, setTasksAlertOpen] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [novaTarefaOpen, setNovaTarefaOpen] = useState(false);
-  // Estado do modal "Pedir confirmação no WhatsApp", mesmo padrão da
-  // Agenda (ver AgendaClient.tsx): guarda o lead inteiro, nunca só um id
-  // solto, para o modal sempre mostrar os dados exatos do lead clicado.
   const [pedidoLead, setPedidoLead] = useState<LeadRow | null>(null);
   const [pedidoMessage, setPedidoMessage] = useState("");
   const [pedidoCadastroIncompleto, setPedidoCadastroIncompleto] = useState(false);
   const [pedidoEnviando, setPedidoEnviando] = useState(false);
 
-  // Mantém o estado local em sincronia sempre que o servidor manda dados
-  // novos (ex: depois de um router.refresh()), sem perder a atualização
-  // otimista que já tinha sido aplicada na hora do arrasto.
   useEffect(() => {
     setLeads(initialClients);
   }, [initialClients]);
@@ -140,8 +123,6 @@ export default function FunilClient({
   }, [initialTasks]);
 
   async function registerContactAttempt(taskId: string, responded: boolean) {
-    // Remove da lista na hora — a tarefa some do painel assim que a
-    // pessoa responde, sem esperar o round-trip do servidor.
     setTaskBusyId(taskId);
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
     const { error } = await supabase.rpc("register_contact_attempt", {
@@ -150,16 +131,12 @@ export default function FunilClient({
     });
     setTaskBusyId(null);
     if (error) {
-      // Se der erro, devolve a tarefa pra lista e deixa o refresh
-      // trazer o estado real do servidor.
       router.refresh();
       return;
     }
     router.refresh();
   }
 
-  // Tarefa manual não tem a lógica de follow-up (sem próxima etiqueta, sem
-  // criar a próxima tarefa) — é só marcar como feita.
   async function completeManualTask(taskId: string) {
     setTaskBusyId(taskId);
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
@@ -173,20 +150,11 @@ export default function FunilClient({
     router.refresh();
   }
 
-  // Toque precisa de um pequeno atraso segurando o card antes de iniciar o
-  // arrasto (senão todo swipe pra rolar as colunas seria confundido com um
-  // drag). Mouse usa distância mínima, que é instantâneo o suficiente no
-  // desktop sem atrapalhar cliques normais no card.
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
   );
 
-  // Sem filtro de período de propósito: o funil mostra quem está em
-  // negociação agora, e "quando o lead entrou" não é motivo para ele sumir
-  // do quadro — é o mesmo raciocínio da tela de Clientes (uma vez no
-  // funil, continua visível até sair dele). Os filtros aqui são todos por
-  // característica do lead (busca, tag, origem), nunca por data.
   const filtered = useMemo(() => {
     const term = search.toLowerCase();
     return leads.filter(
@@ -218,17 +186,12 @@ export default function FunilClient({
 
   const activeLead = activeId ? leads.find((l) => l.id === activeId) ?? null : null;
 
-  // Eventos de HIPRO aguardando confirmação, separado de propósito das
-  // tarefas de contato do funil — são coisas diferentes (agenda x etapa),
-  // por isso ficam em alertas distintos em vez de uma lista só.
   const pendingConfirmationLeads = useMemo(
     () => leads.filter((l) => l.nextEvent && !l.nextEvent.confirmed),
     [leads]
   );
 
   async function moveToStage(leadId: string, newStage: StageKey) {
-    // Move na tela imediatamente, sem esperar a resposta do servidor — é
-    // isso que faz o arrasto parecer fluido em vez de travado.
     setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, stage: newStage } : l)));
     await supabase.from("clients").update({ stage: newStage }).eq("id", leadId);
     router.refresh();
@@ -240,9 +203,6 @@ export default function FunilClient({
     moveToStage(lead.id, STAGES[idx + 1].key);
   }
 
-  // "Confirmar": só muda o status, via a mesma RPC confirmar_agendamento
-  // da Agenda (fica no histórico), sempre pelo id exato da reserva —
-  // nunca por client_id+data, que antes era como esta função operava.
   async function toggleConfirmed(lead: LeadRow) {
     if (!lead.nextEvent) return;
     const { error } = await supabase.rpc("confirmar_agendamento", {
@@ -256,9 +216,6 @@ export default function FunilClient({
     router.refresh();
   }
 
-  // "Pedir confirmação no WhatsApp": mesmo padrão da Agenda — abre o
-  // modal com os dados do "lead" recebido por parâmetro, nunca confirma
-  // sozinho, nunca mexe em calendar_events.confirmed.
   function handlePedirConfirmacao(lead: LeadRow) {
     if (!lead.nextEvent) return;
     const { message, cadastroIncompleto } = buildPedidoConfirmacaoMessage({
@@ -311,14 +268,7 @@ export default function FunilClient({
     <div className="space-y-4">
       <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">Funil de vendas</h1>
 
-      {/* Os dois alertas abaixo ficam num bloco "sticky", que gruda no topo
-          da tela quando a página rola, mas continua ocupando espaço real
-          no fluxo da página — diferente de "fixed", não sobrepõe o resto
-          do conteúdo nem precisa de gambiarra pra reservar espaço. */}
       <div className="sticky top-0 z-20 -mx-4 space-y-2 bg-neutral-50 px-4 pb-2 pt-2 dark:bg-neutral-950 md:static md:mx-0 md:space-y-4 md:bg-transparent md:px-0 md:pb-0 md:pt-0">
-        {/* Alerta 1: confirmação de agenda do HIPRO — separado de propósito
-            das tarefas de etapa do funil abaixo. Fechado por padrão, só
-            expande com um toque, igual ao aviso amarelo do Dashboard. */}
         {pendingConfirmationLeads.length > 0 && (
           <div className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50 shadow-lg dark:border-amber-900/40 dark:bg-amber-900/10 md:shadow-none">
             <button
@@ -347,9 +297,6 @@ export default function FunilClient({
                         <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
                           {formatDate(lead.nextEvent!.date_start)}
                         </p>
-                        {/* Rastreio de envio por reserva, mesmo padrão da
-                            Agenda (ver AgendaClient.tsx) — "pedir" e
-                            "confirmar" são ações independentes aqui também. */}
                         <p className="text-[10px] text-neutral-400">
                           {lead.nextEvent!.confirmation_message_sent_at
                             ? `✓ mensagem enviada em ${formatDiaMes(lead.nextEvent!.confirmation_message_sent_at)}`
@@ -376,11 +323,6 @@ export default function FunilClient({
           </div>
         )}
 
-        {/* Alerta 2: tarefas (as de contato automáticas do funil e as
-            manuais, criadas pelo botão "+" ou pela ficha do cliente). Cada
-            tarefa só mostra os botões de ação depois de tocada, pra ficar
-            enxuto no celular. Esse bloco fica sempre visível (mesmo sem
-            nenhuma pendente), porque o "+" de criar tarefa mora aqui. */}
         <div className="overflow-hidden rounded-2xl border border-brand-blue/30 bg-brand-blue/5 shadow-lg dark:border-brand-blue/20 dark:bg-brand-blue/10 md:shadow-none">
           <div className="flex items-center justify-between gap-2 p-3 text-sm text-brand-blue">
             {tasks.length > 0 ? (
@@ -531,20 +473,26 @@ export default function FunilClient({
       </p>
 
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-        {/* "scroll-smooth" (rolagem suave via CSS) some daqui de propósito:
-            junto com "snap-mandatory" ele trava a rolagem no celular, porque
-            o navegador fica tentando terminar a animação suave até a coluna
-            mais próxima enquanto o dedo ainda está arrastando a tela, e as
-            duas coisas disputam a posição do scroll. "proximity" no lugar de
-            "mandatory" também ajuda: só encaixa quando você já está perto
-            do limite da coluna, em vez de forçar parar em toda coluna. */}
         <div
           className={`flex gap-3 overflow-x-auto pb-4 -mx-4 px-4 sm:mx-0 sm:px-0 sm:snap-none ${
             activeId ? "" : "snap-x snap-proximity"
           }`}
         >
           {STAGES.map((stage) => {
-            const stageLeads = filtered.filter((c) => c.stage === stage.key);
+            const stageLeads = filtered
+              .filter((c) => c.stage === stage.key)
+              .sort((a, b) => {
+                // Quem tem data de agendamento vem antes de quem não tem, e
+                // entre os que têm, o mais próximo (menor data) vem primeiro.
+                // Usa nextEvent (reserva já no calendário) e, na falta dela,
+                // cai para data_evento (data só prevista, ainda sem reserva).
+                const dataA = a.nextEvent?.date_start ?? a.data_evento;
+                const dataB = b.nextEvent?.date_start ?? b.data_evento;
+                if (!dataA && !dataB) return 0;
+                if (!dataA) return 1;
+                if (!dataB) return -1;
+                return dataA.localeCompare(dataB);
+              });
             return (
               <FunilColumn key={stage.key} stage={stage} count={stageLeads.length}>
                 {stageLeads.map((lead) => (
@@ -577,10 +525,6 @@ export default function FunilClient({
         </DragOverlay>
       </DndContext>
 
-      {/* O antigo botão "+" fixo de "Novo lead" saiu daqui — virou o botão
-          "+" global (components/QuickActionsButton.tsx), que fica
-          disponível em toda tela e inclui esta opção junto com as outras
-          (tarefa, lançamento, evento). */}
       {novaTarefaOpen && (
         <NovaTarefaModal leads={leads} onClose={() => setNovaTarefaOpen(false)} onCreated={handleTaskCreated} />
       )}
@@ -596,8 +540,6 @@ export default function FunilClient({
         />
       )}
 
-      {/* Mesmo modal de "Pedir confirmação no WhatsApp" da Agenda (ver
-          AgendaClient.tsx), reaproveitando a mesma buildPedidoConfirmacaoMessage. */}
       {pedidoLead && (
         <div
           className="fixed inset-0 z-30 flex items-end justify-center bg-black/40 sm:items-center"
@@ -698,12 +640,6 @@ function LeadCard({
   const { attributes, listeners, setNodeRef } = useDraggable({ id: lead.id });
 
   return (
-    // Sem "touch-none" de propósito: essa classe desliga a rolagem nativa
-    // do navegador assim que o dedo toca o card, antes mesmo do sensor de
-    // toque (delay: 200, tolerance: 8 lá em cima) ter chance de decidir se
-    // é um toque-e-segura (arrastar) ou um deslize rápido (rolar a tela).
-    // Sem ela, o navegador rola normalmente em qualquer toque rápido, e só
-    // quando o dedo fica parado no card pelos 200ms é que o arrasto assume.
     <div
       ref={setNodeRef}
       {...listeners}
@@ -723,9 +659,6 @@ function LeadCard({
   );
 }
 
-// Conteúdo visual do card, compartilhado entre o card real (na coluna) e o
-// clone que flutua sob o dedo/cursor durante o arrasto (DragOverlay). O
-// clone (floating=true) não tem botões clicáveis, é só a aparência.
 function LeadCardContent({
   lead,
   stage,
@@ -749,10 +682,6 @@ function LeadCardContent({
     >
       <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
         {lead.name}
-        {/* Mostra mesmo fora da coluna "Cliente": é possível (e correto)
-            um cliente já convertido estar temporariamente numa etapa
-            anterior, como "Agendamento" numa segunda locação, sem que
-            isso desfaça a conversão — ver leva F. */}
         {lead.is_client && stage.key !== "cliente" && (
           <span className="ml-1.5 rounded-full bg-brand-teal/10 px-1.5 py-0.5 align-middle text-[10px] font-medium text-brand-teal">
             Cliente
@@ -781,10 +710,6 @@ function LeadCardContent({
         )
       )}
 
-      {/* Etiqueta, não botão. Com várias datas reservadas, "marcar paga"
-          daqui não diria qual delas, e era exatamente essa ambiguidade que
-          o campo antigo no cliente escondia. Abrir o card leva aos botões
-          por agendamento, que é onde a pergunta tem resposta. */}
       {lead.taxasPendentes > 0 && (
         <span className="mt-1 block w-fit rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
           💳 {lead.taxasPendentes === 1 ? "Taxa pendente" : `${lead.taxasPendentes} taxas pendentes`}
