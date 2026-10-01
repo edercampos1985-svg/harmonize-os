@@ -28,7 +28,20 @@ export default async function EquipamentosPage() {
   // divergindo do mesmo número mostrado no Dashboard.
   const { data: rentals } = await supabase
     .from("rentals_contabilizaveis")
-    .select("equipment_id, calculated_value");
+    .select("id, equipment_id, calculated_value");
+
+  // Saldo em aberto por locação, para calcular o pendente de cada
+  // equipamento sem duplicar a lógica de pagamento parcial que já vive em
+  // rentals_situacao_pagamento.
+  const rentalIds = (rentals ?? []).map((r) => r.id);
+  const { data: situacoes } = rentalIds.length
+    ? await supabase
+        .from("rentals_situacao_pagamento")
+        .select("rental_id, saldo")
+        .in("rental_id", rentalIds)
+    : { data: [] as { rental_id: string; saldo: number }[] };
+
+  const saldoByRentalId = new Map((situacoes ?? []).map((s) => [s.rental_id, Number(s.saldo)]));
 
   const { data: upcoming } = await supabase
     .from("calendar_events")
@@ -52,6 +65,7 @@ export default async function EquipamentosPage() {
           const eqRentals = (rentals ?? []).filter((r) => r.equipment_id === eq.id);
           const totalLocacoes = eqRentals.length;
           const receitaTotal = eqRentals.reduce((sum, r) => sum + Number(r.calculated_value), 0);
+          const pendenteTotal = eqRentals.reduce((sum, r) => sum + (saldoByRentalId.get(r.id) ?? 0), 0);
           const nextEvent = normalizedUpcoming.find((e) => e.equipment_id === eq.id);
 
           return (
@@ -96,6 +110,11 @@ export default async function EquipamentosPage() {
                 <div>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400">Receita total</p>
                   <p className="mt-0.5 text-sm font-medium text-brand-teal">{formatCurrency(receitaTotal)}</p>
+                  {pendenteTotal > 0 && (
+                    <p className="mt-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                      Pendente: {formatCurrency(pendenteTotal)}
+                    </p>
+                  )}
                 </div>
                 <div className="col-span-2">
                   <p className="text-xs text-neutral-500 dark:text-neutral-400">Número de série</p>
