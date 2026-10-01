@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -127,8 +127,6 @@ export default function FunilClient({
   const [pedidoMessage, setPedidoMessage] = useState("");
   const [pedidoCadastroIncompleto, setPedidoCadastroIncompleto] = useState(false);
   const [pedidoEnviando, setPedidoEnviando] = useState(false);
-  const alertsRef = useRef<HTMLDivElement>(null);
-  const [alertsHeight, setAlertsHeight] = useState(0);
 
   // Mantém o estado local em sincronia sempre que o servidor manda dados
   // novos (ex: depois de um router.refresh()), sem perder a atualização
@@ -140,21 +138,6 @@ export default function FunilClient({
   useEffect(() => {
     setTasks(initialTasks);
   }, [initialTasks]);
-
-  // No celular os alertas viram um bloco flutuante fixo (ver abaixo), o que
-  // tira eles do fluxo normal da página. Esse observer mede a altura real
-  // desse bloco (que muda quando um alerta abre/fecha ou quando a lista de
-  // pendências muda) pra reservar o mesmo espaço logo depois, evitando que a
-  // busca e o resto da tela pulem pra cima e fiquem escondidas atrás dele.
-  useEffect(() => {
-    const el = alertsRef.current;
-    if (!el) return;
-    const update = () => setAlertsHeight(el.offsetHeight);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   async function registerContactAttempt(taskId: string, responded: boolean) {
     // Remove da lista na hora — a tarefa some do painel assim que a
@@ -328,18 +311,11 @@ export default function FunilClient({
     <div className="space-y-4">
       <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">Funil de vendas</h1>
 
-      {/* Os dois alertas abaixo ficam num bloco só, flutuante e fixo no topo
-          da tela no celular (logo abaixo do título "Funil de vendas"), pra
-          não sumirem de vista quando a página rola ou quando arrasta as
-          colunas do funil pro lado. "left-4 right-4" em vez de "inset-x-0"
-          é de propósito: fica com respiro nas laterais, sem grudar de ponta
-          a ponta na tela. No desktop (md:) volta pro lugar de sempre, dentro
-          do fluxo normal da página — lá não existe esse problema de rolagem
-          e a barra lateral já ocupa espaço real ao lado do conteúdo. */}
-      <div
-        ref={alertsRef}
-        className="fixed left-4 right-4 top-28 z-20 space-y-2 md:static md:left-auto md:right-auto md:top-auto md:z-auto md:space-y-4"
-      >
+      {/* Os dois alertas abaixo ficam num bloco "sticky", que gruda no topo
+          da tela quando a página rola, mas continua ocupando espaço real
+          no fluxo da página — diferente de "fixed", não sobrepõe o resto
+          do conteúdo nem precisa de gambiarra pra reservar espaço. */}
+      <div className="sticky top-0 z-20 -mx-4 space-y-2 bg-neutral-50 px-4 pb-2 pt-2 dark:bg-neutral-950 md:static md:mx-0 md:space-y-4 md:bg-transparent md:px-0 md:pb-0 md:pt-0">
         {/* Alerta 1: confirmação de agenda do HIPRO — separado de propósito
             das tarefas de etapa do funil abaixo. Fechado por padrão, só
             expande com um toque, igual ao aviso amarelo do Dashboard. */}
@@ -494,14 +470,6 @@ export default function FunilClient({
           )}
         </div>
       </div>
-
-      {/* Reserva, só no celular, o espaço que os alertas ocupariam no fluxo
-          normal da página — sem isso, a busca e o resto da tela subiriam e
-          ficariam escondidas atrás do bloco flutuante fixo acima. No desktop
-          os alertas continuam no fluxo normal (md:static), então essa
-          reserva não faz efeito nenhum lá (fica com altura 0 visualmente,
-          porque a div toda vira "display: none" a partir do md:). */}
-      <div style={{ height: alertsHeight }} className="md:hidden" aria-hidden="true" />
 
       <div className="flex flex-wrap items-center gap-2">
         <input
