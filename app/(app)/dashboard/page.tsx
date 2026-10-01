@@ -64,30 +64,44 @@ export default async function DashboardPage({
   // Concluídas: evento no passado (antes de hoje) e não cancelado — não
   // depende do status estar manualmente marcado como "realizada", porque
   // na prática esse campo raramente é atualizado depois que a data passa.
-  const [{ count: concluidasCount }, { count: canceladasCount }, { count: reagendadasCount }] = await Promise.all([
-    supabase
-      .from("rentals")
-      .select("id", { count: "exact", head: true })
-      .neq("status", "cancelada")
-      .eq("is_test", false)
-      .lt("event_date", todayStr)
-      .gte("event_date", fromStr)
-      .lte("event_date", toStr),
-    supabase
-      .from("rentals")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "cancelada")
-      .eq("is_test", false)
-      .gte("event_date", fromStr)
-      .lte("event_date", toStr),
-    supabase
-      .from("rentals")
-      .select("id", { count: "exact", head: true })
-      .eq("rescheduled", true)
-      .eq("is_test", false)
-      .gte("event_date", fromStr)
-      .lte("event_date", toStr),
-  ]);
+  // Reagendadas: soma rentals.rescheduled (locações já formalizadas) com
+  // calendar_events.rescheduled de reservas que ainda não viraram rental
+  // (rental_id nulo) — a mesma lacuna corrigida no modal do Funil.
+  const [{ count: concluidasCount }, { count: canceladasCount }, rescheduledRentalsRes, rescheduledEventsRes] =
+    await Promise.all([
+      supabase
+        .from("rentals")
+        .select("id", { count: "exact", head: true })
+        .neq("status", "cancelada")
+        .eq("is_test", false)
+        .lt("event_date", todayStr)
+        .gte("event_date", fromStr)
+        .lte("event_date", toStr),
+      supabase
+        .from("rentals")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "cancelada")
+        .eq("is_test", false)
+        .gte("event_date", fromStr)
+        .lte("event_date", toStr),
+      supabase
+        .from("rentals")
+        .select("id", { count: "exact", head: true })
+        .eq("rescheduled", true)
+        .eq("is_test", false)
+        .gte("event_date", fromStr)
+        .lte("event_date", toStr),
+      supabase
+        .from("calendar_events")
+        .select("id", { count: "exact", head: true })
+        .eq("rescheduled", true)
+        .eq("is_test", false)
+        .is("rental_id", null)
+        .gte("date_start", fromStr)
+        .lte("date_start", toStr),
+    ]);
+
+  const reagendadasCount = (rescheduledRentalsRes.count ?? 0) + (rescheduledEventsRes.count ?? 0);
 
   // Resumo por equipamento (HIPRO 1 / HIPRO 2), no mesmo período filtrado
   // acima — antes só existia na tela separada de Equipamentos; junto no
@@ -281,7 +295,7 @@ export default async function DashboardPage({
         </div>
         <div className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-xl dark:border-neutral-800/60 dark:bg-neutral-900/55">
           <p className="text-xs text-neutral-500 dark:text-neutral-400">Reagendadas</p>
-          <p className="mt-1 text-lg font-semibold text-brand-blue">{reagendadasCount ?? 0}</p>
+          <p className="mt-1 text-lg font-semibold text-brand-blue">{reagendadasCount}</p>
         </div>
       </div>
 
