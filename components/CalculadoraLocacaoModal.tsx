@@ -630,6 +630,8 @@ export default function CalculadoraLocacaoModal({
         p_rental_id: rentalId,
         p_km_ida: kmIdaNumber,
         p_valor_deslocamento: resumo.valorDeslocamento,
+        // Leva AC: já está somado em calculated_value; não gerar lançamento próprio.
+        p_incluso_no_valor: true,
       });
       if (e2) avisos.push("o deslocamento não foi salvo automaticamente");
     }
