@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ClientPicker, { type ClientOption } from "@/components/ClientPicker";
 
+import { hojeLocal } from "@/lib/period";
 export default function NovoEventoModal({
   clients,
   defaultDate,
@@ -19,7 +20,7 @@ export default function NovoEventoModal({
   const [localClients, setLocalClients] = useState(clients);
   const [title, setTitle] = useState("");
   const [clientId, setClientId] = useState("");
-  const [dateStart, setDateStart] = useState(defaultDate ?? (() => new Date().toISOString().slice(0, 10))());
+  const [dateStart, setDateStart] = useState(defaultDate ?? (() => hojeLocal())());
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

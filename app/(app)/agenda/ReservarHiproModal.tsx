@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ClientPicker, { type ClientOption } from "@/components/ClientPicker";
 
+import { hojeLocal } from "@/lib/period";
 interface EquipmentOption {
   id: string;
   code: string;
@@ -36,7 +37,7 @@ export default function ReservarHiproModal({
   const [localClients, setLocalClients] = useState(clients);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [equipmentId, setEquipmentId] = useState(equipments[0]?.id ?? "");
-  const [eventDate, setEventDate] = useState(defaultDate ?? (() => new Date().toISOString().slice(0, 10))());
+  const [eventDate, setEventDate] = useState(defaultDate ?? (() => hojeLocal())());
   const [notes, setNotes] = useState("");
   const [isMentoria, setIsMentoria] = useState(false);
   const [saving, setSaving] = useState(false);
