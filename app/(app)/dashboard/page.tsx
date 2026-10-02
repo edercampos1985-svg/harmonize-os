@@ -2,7 +2,7 @@ import Link from "next/link";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { createClient } from "@/lib/supabase/server";
-import { resolvePeriod } from "@/lib/period";
+import { resolvePeriod, hojeLocal } from "@/lib/period";
 import { formatCurrency } from "@/lib/format";
 import PeriodFilter from "@/components/PeriodFilter";
 import DashboardCharts from "@/components/DashboardCharts";
@@ -23,7 +23,11 @@ export default async function DashboardPage({
   const { from, to } = resolvePeriod(searchParams.period, searchParams.from, searchParams.to);
   const fromStr = from.toISOString().slice(0, 10);
   const toStr = to.toISOString().slice(0, 10);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = hojeLocal();
+  // Âncora ao meio-dia UTC do "hoje" de Brasília: somar dias daqui nunca
+  // escorrega de dia (Date.now() em UTC errava depois das 21h).
+  const hojeAncora = new Date(`${todayStr}T12:00:00Z`).getTime();
+  const somaDias = (n: number) => new Date(hojeAncora + n * 86400000);
 
   // O Dashboard é tela de decisão, então registro de teste não entra em
   // nenhum número. Onde a consulta lê de uma view _contabilizaveis, esse
@@ -136,7 +140,7 @@ export default async function DashboardPage({
 
   const saldoByRentalId = new Map((situacoes ?? []).map((s) => [s.rental_id, Number(s.saldo)]));
 
-  const in7Str = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const in7Str = somaDias(7).toISOString().slice(0, 10);
   const { count: pendingConfirmations } = await supabase
     .from("calendar_events")
     .select("id", { count: "exact", head: true })
@@ -184,7 +188,7 @@ export default async function DashboardPage({
   // Equipamento parado é receita parada, e ninguém para pra somar isso com
   // "quem eu já deveria ter reativado" — o radar faz essa conta sozinho.
   const radarHorizonDays = 30;
-  const radarEndStr = new Date(Date.now() + radarHorizonDays * 86400000).toISOString().slice(0, 10);
+  const radarEndStr = somaDias(radarHorizonDays).toISOString().slice(0, 10);
   const { data: radarEvents } = await supabase
     .from("calendar_events")
     .select("date_start, client_id, clients(city)")
@@ -205,7 +209,7 @@ export default async function DashboardPage({
 
   const freeDays: string[] = [];
   for (let i = 1; i <= radarHorizonDays; i++) {
-    const dateObj = new Date(Date.now() + i * 86400000);
+    const dateObj = somaDias(i);
     if (dateObj.getUTCDay() === 0) continue; // domingo nunca entra como dia livre sugerido
     const d = dateObj.toISOString().slice(0, 10);
     if (!busyDaysSet.has(d)) freeDays.push(d);
