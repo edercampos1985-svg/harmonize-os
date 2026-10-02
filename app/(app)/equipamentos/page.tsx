@@ -4,6 +4,7 @@ import EquipamentoStatusControl from "@/components/EquipamentoStatusControl";
 import EquipamentoInfoControl from "@/components/EquipamentoInfoControl";
 import EquipamentoPrevistasControl from "@/components/EquipamentoPrevistasControl";
 
+import { hojeLocal } from "@/lib/period";
 const EQUIPMENT_COLORS: Record<string, string> = {
   hipro_1: "bg-brand-teal",
   hipro_2: "bg-brand-blue",
@@ -11,7 +12,7 @@ const EQUIPMENT_COLORS: Record<string, string> = {
 
 export default async function EquipamentosPage() {
   const supabase = createClient();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
 
   // Leva U: não há job agendado neste projeto, então a atualização de
   // previsões vencidas acontece "sob demanda" aqui, antes de montar a
