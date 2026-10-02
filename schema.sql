@@ -2458,6 +2458,7 @@ declare
   v_categoria uuid;
   v_transacao_id uuid;
   v_payment_id uuid;
+  v_saldo numeric;
 begin
   if not has_module_permission('financeiro') then
     raise exception 'Sem permissão para registrar pagamentos.';
@@ -2479,6 +2480,15 @@ begin
   end if;
   if v_status = 'cancelada' then
     raise exception 'Esta locação está cancelada. Reative o agendamento antes de registrar o pagamento.';
+  end if;
+
+  -- Leva AD: não aceita pagamento acima do que falta receber. O saldo já
+  -- desconta a taxa de reserva paga. Se o cliente realmente pagou a mais,
+  -- corrija antes o valor da locação em "Editar locação".
+  select saldo into v_saldo from rentals_situacao_pagamento where rental_id = p_rental_id;
+  if round(p_valor, 2) > round(coalesce(v_saldo, 0), 2) then
+    raise exception 'O pagamento (R$ %) é maior que o saldo em aberto (R$ %). Ajuste o valor da locação antes, se o cliente pagou a mais.',
+      to_char(round(p_valor, 2), 'FM999G990D00'), to_char(round(coalesce(v_saldo, 0), 2), 'FM999G990D00');
   end if;
 
   select id into v_categoria
