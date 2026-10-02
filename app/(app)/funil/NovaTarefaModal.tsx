@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+import { hojeLocal } from "@/lib/period";
 // Tipo mínimo de propósito — este modal é usado em vários lugares (Funil,
 // ficha do cliente, botão "+" global em qualquer tela), então não depende
 // do tipo completo de nenhuma tela específica, só do que realmente precisa
@@ -33,7 +34,7 @@ export default function NovaTarefaModal({
   const supabase = createClient();
   const [title, setTitle] = useState("");
   const [clientId, setClientId] = useState(lockedClientId ?? "");
-  const [dueDate, setDueDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = useState(() => hojeLocal());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

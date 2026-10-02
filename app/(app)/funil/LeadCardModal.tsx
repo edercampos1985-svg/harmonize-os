@@ -10,6 +10,7 @@ import AvailabilityImageModal from "@/components/AvailabilityImageModal";
 import NovaTarefaModal from "./NovaTarefaModal";
 import AgendamentosDoCliente from "@/components/AgendamentosDoCliente";
 
+import { hojeLocal } from "@/lib/period";
 const QUICK_COLOR = "#3DBFB8";
 
 export default function LeadCardModal({
@@ -48,7 +49,7 @@ export default function LeadCardModal({
     let active = true;
     async function carregarStats() {
       const [rentalsRes, reagendadasReservaRes] = await Promise.all([
-        supabase.from("rentals").select("status, rescheduled").eq("client_id", lead.id),
+        supabase.from("rentals").select("status, rescheduled, event_date").eq("client_id", lead.id),
         supabase
           .from("calendar_events")
           .select("id", { count: "exact", head: true })
@@ -59,7 +60,9 @@ export default function LeadCardModal({
       if (!active) return;
       const rentals = rentalsRes.data ?? [];
       setStats({
-        concluidas: rentals.filter((r) => r.status === "realizada").length,
+        // Mesma regra do Dashboard: evento antes de hoje e não cancelado
+        // (o status "realizada" quase nunca é marcado à mão).
+        concluidas: rentals.filter((r) => r.status !== "cancelada" && r.event_date < hojeLocal()).length,
         canceladas: rentals.filter((r) => r.status === "cancelada").length,
         reagendadas: rentals.filter((r) => r.rescheduled).length + (reagendadasReservaRes.count ?? 0),
       });

@@ -23,6 +23,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 
+import { hojeLocal } from "@/lib/period";
 export const STAGES = [
   { key: "lead", label: "Novo contato", dot: "bg-neutral-400" },
   { key: "contato", label: "Tentativa de contato", dot: "bg-brand-blue" },
@@ -350,7 +351,7 @@ export default function FunilClient({
           {tasksAlertOpen && tasks.length > 0 && (
             <div className="max-h-[45vh] space-y-1.5 overflow-y-auto border-t border-brand-blue/20 p-3 pt-2 md:max-h-none md:overflow-visible">
               {tasks.map((task) => {
-                const atrasada = task.due_date < new Date().toISOString().slice(0, 10);
+                const atrasada = task.due_date < hojeLocal();
                 const busy = taskBusyId === task.id;
                 const expanded = expandedTaskId === task.id;
                 return (
