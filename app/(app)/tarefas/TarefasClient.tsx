@@ -6,6 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/format";
 
+import { hojeLocal } from "@/lib/period";
 export interface TarefaRow {
   id: string;
   client_id: string | null;
@@ -135,7 +136,7 @@ export default function TarefasClient({
     router.refresh();
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = hojeLocal();
 
   return (
     <div className="space-y-6">
