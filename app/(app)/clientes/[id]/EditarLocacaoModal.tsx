@@ -171,6 +171,7 @@ export default function EditarLocacaoModal({
   const [loadingPayments, setLoadingPayments] = useState(true);
   const [saldoDevedor, setSaldoDevedor] = useState<number | null>(null);
   const [totalDespesas, setTotalDespesas] = useState(0);
+  const [creditoTaxa, setCreditoTaxa] = useState(0);
 
   const [novoValor, setNovoValor] = useState("");
   const [novaForma, setNovaForma] = useState("pix");
@@ -181,9 +182,57 @@ export default function EditarLocacaoModal({
   // Leva AC: lucro = o que de fato entrou (pagamentos + ajuda de custo lançada
   // à parte) menos os custos ligados à locação. Ajuda de custo que já está
   // somada no valor da locação não entra de novo: os pagamentos já a cobrem.
-  const totalRecebido = payments.reduce((acc, p) => acc + Number(p.valor ?? 0), 0);
+  const totalRecebido = payments.reduce((acc, p) => acc + Number(p.valor ?? 0), 0) + creditoTaxa;
   const ajudaCustoLancada = rental.deslocamento_incluso_no_valor ? 0 : Number(rental.valor_deslocamento ?? 0);
   const lucroLiquido = totalRecebido + ajudaCustoLancada - totalDespesas;
+
+  // Leva AD: custo (gasolina etc.) ligado a esta locação, lançado aqui mesmo.
+  const [categoriasSaida, setCategoriasSaida] = useState<{ id: string; name: string }[]>([]);
+  const [custoCategoriaId, setCustoCategoriaId] = useState("");
+  const [custoValor, setCustoValor] = useState("");
+  const [custoForma, setCustoForma] = useState("dinheiro");
+  const [custoDescricao, setCustoDescricao] = useState("");
+  const [custoSalvando, setCustoSalvando] = useState(false);
+  const [custoErro, setCustoErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase
+      .from("categories")
+      .select("id, name")
+      .eq("type", "saida")
+      .eq("scope", "harmonize")
+      .order("name")
+      .then(({ data }) => setCategoriasSaida(data ?? []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleAddCusto() {
+    const valorCusto = Number(custoValor.replace(",", "."));
+    if (!custoCategoriaId || !valorCusto || valorCusto <= 0) {
+      setCustoErro("Escolha a categoria e um valor maior que zero.");
+      return;
+    }
+    setCustoSalvando(true);
+    setCustoErro(null);
+    const { error: rpcError } = await supabase.rpc("registrar_despesa_locacao", {
+      p_rental_id: rental.id,
+      p_category_id: custoCategoriaId,
+      p_amount: valorCusto,
+      p_payment_method: custoForma,
+      p_date: rental.event_date,
+      p_description: custoDescricao || null,
+      p_notes: null,
+    });
+    setCustoSalvando(false);
+    if (rpcError) {
+      setCustoErro(rpcError.message || "Não foi possível lançar o custo.");
+      return;
+    }
+    setCustoValor("");
+    setCustoDescricao("");
+    await carregarPagamentos();
+    onPaymentsChanged?.();
+  }
 
   async function carregarPagamentos() {
     setLoadingPayments(true);
@@ -195,7 +244,7 @@ export default function EditarLocacaoModal({
         .order("data", { ascending: false }),
       supabase
         .from("rentals_situacao_pagamento")
-        .select("saldo")
+        .select("saldo, credito_taxa")
         .eq("rental_id", rental.id)
         .maybeSingle(),
       supabase.from("transactions").select("amount").eq("rental_id", rental.id).eq("type", "saida"),
@@ -203,6 +252,7 @@ export default function EditarLocacaoModal({
     setTotalDespesas((despesas ?? []).reduce((acc, d: any) => acc + Number(d.amount ?? 0), 0));
     setPayments(pagamentos ?? []);
     setSaldoDevedor(situacao?.saldo ?? null);
+    setCreditoTaxa(Number(situacao?.credito_taxa ?? 0));
     setLoadingPayments(false);
   }
 
@@ -536,7 +586,7 @@ export default function EditarLocacaoModal({
             <div className="rounded-xl border border-neutral-200 p-3 text-sm dark:border-neutral-700">
               <p className="mb-1 text-xs font-medium text-neutral-600 dark:text-neutral-400">Lucro líquido desta locação</p>
               <div className="space-y-0.5 text-neutral-700 dark:text-neutral-300">
-                <div className="flex justify-between"><span>Recebido da locação</span><span>{formatCurrency(totalRecebido)}</span></div>
+                <div className="flex justify-between"><span>Recebido da locação{creditoTaxa > 0 ? " (inclui taxa de reserva)" : ""}</span><span>{formatCurrency(totalRecebido)}</span></div>
                 {ajudaCustoLancada > 0 && (
                   <div className="flex justify-between"><span>Ajuda de custo (deslocamento)</span><span>{formatCurrency(ajudaCustoLancada)}</span></div>
                 )}
@@ -544,6 +594,56 @@ export default function EditarLocacaoModal({
                 <div className={`flex justify-between border-t border-neutral-200 pt-1 font-semibold dark:border-neutral-700 ${lucroLiquido >= 0 ? "text-emerald-600" : "text-red-500"}`}>
                   <span>Lucro líquido</span><span>{formatCurrency(lucroLiquido)}</span>
                 </div>
+              </div>
+              <div className="mt-3 space-y-2 border-t border-neutral-200 pt-3 dark:border-neutral-700">
+                <p className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Lançar custo desta locação</p>
+                <select
+                  value={custoCategoriaId}
+                  onChange={(e) => setCustoCategoriaId(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                >
+                  <option value="">Categoria do custo...</option>
+                  {categoriasSaida.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    inputMode="decimal"
+                    value={custoValor}
+                    onChange={(e) => setCustoValor(e.target.value.replace(/[^\d,]/g, ""))}
+                    placeholder="R$ 0,00"
+                    className="rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                  />
+                  <select
+                    value={custoForma}
+                    onChange={(e) => setCustoForma(e.target.value)}
+                    className="rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                  >
+                    {PAYMENT_METHODS.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <input
+                  value={custoDescricao}
+                  onChange={(e) => setCustoDescricao(e.target.value)}
+                  placeholder="Descrição (opcional)"
+                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+                />
+                {custoErro && <p className="text-xs text-red-500">{custoErro}</p>}
+                <button
+                  type="button"
+                  onClick={handleAddCusto}
+                  disabled={custoSalvando}
+                  className="w-full rounded-lg border border-neutral-300 py-2 text-xs font-medium text-neutral-600 disabled:opacity-60 dark:border-neutral-700 dark:text-neutral-300"
+                >
+                  {custoSalvando ? "Lançando..." : "+ Lançar custo"}
+                </button>
               </div>
             </div>
           )}
