@@ -170,7 +170,7 @@ export default function CalculadoraLocacaoModal({
   const equipmentsList = mode.kind === "create" ? mode.equipments : [];
   const [equipmentId, setEquipmentId] = useState(equipmentsList[0]?.id ?? "");
   const [eventDate, setEventDate] = useState(() =>
-    mode.kind === "finalize" ? mode.reservation.eventDate : new Date().toISOString().slice(0, 10)
+    mode.kind === "finalize" ? mode.reservation.eventDate : hojeLocal()
   );
   // Leva W: período de vários dias. Só existe no modo "create" (locação
   // lançada direto, sem passar por pré-reserva de um dia específico da

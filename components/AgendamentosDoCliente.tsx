@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, formatDate } from "@/lib/format";
 
+import { hojeLocal } from "@/lib/period";
 // Uma linha por agendamento do cliente, já com o rótulo de situação
 // resolvido pelo banco. A função agendamentos_do_cliente é quem combina
 // os dois eixos (status da locação e marca de confirmado) num rótulo só,
@@ -75,7 +76,7 @@ const BOTAO_VERMELHO =
   "rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 disabled:opacity-60 dark:border-red-900/50 dark:text-red-400";
 
 function hoje(): string {
-  return new Date().toISOString().slice(0, 10);
+  return hojeLocal();
 }
 
 export default function AgendamentosDoCliente({
