@@ -66,6 +66,7 @@ export default function EditarLocacaoModal({
   currentClientName,
   onClose,
   onSaved,
+  onPaymentsChanged,
 }: {
   rental: RentalToEdit;
   equipments: EquipmentOption[];
@@ -78,6 +79,12 @@ export default function EditarLocacaoModal({
   currentClientName: string;
   onClose: () => void;
   onSaved: () => void;
+  // Lançar ou remover um pagamento não fecha o modal: quem abre só
+  // precisa atualizar os dados por trás (saldo, situação), para dar para
+  // lançar vários pagamentos em sequência (parte em PIX, parte em
+  // dinheiro) e para não perder o que estiver sendo editado nos outros
+  // campos.
+  onPaymentsChanged?: () => void;
 }) {
   const supabase = createClient();
   const [equipmentId, setEquipmentId] = useState(rental.equipment_id);
@@ -215,7 +222,7 @@ export default function EditarLocacaoModal({
 
     setNovoValor("");
     await carregarPagamentos();
-    onSaved();
+    onPaymentsChanged?.();
   }
 
   async function handleRemovePayment(paymentId: string) {
@@ -229,7 +236,7 @@ export default function EditarLocacaoModal({
       return;
     }
     await carregarPagamentos();
-    onSaved();
+    onPaymentsChanged?.();
   }
 
   const shotsNumber = Number(shots.replace(/\D/g, ""));

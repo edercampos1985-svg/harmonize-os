@@ -527,6 +527,7 @@ export default function ClienteDetailClient({
           currentClientId={client.id}
           currentClientName={client.name}
           onClose={() => setEditingRental(null)}
+          onPaymentsChanged={() => router.refresh()}
           onSaved={() => {
             setEditingRental(null);
             router.refresh();
