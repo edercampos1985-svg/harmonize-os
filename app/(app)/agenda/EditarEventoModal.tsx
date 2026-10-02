@@ -58,6 +58,7 @@ interface RentalDetails {
   equipment_id: string;
   km_ida: number | null;
   valor_deslocamento: number;
+  deslocamento_incluso_no_valor: boolean;
   equipments: EquipamentoContratoInfo | null;
 }
 
@@ -135,6 +136,7 @@ export default function EditarEventoModal({
   const [loadingRental, setLoadingRental] = useState(false);
   const [valorDeslocamento, setValorDeslocamento] = useState("");
   const [kmIda, setKmIda] = useState("");
+  const [inclusoNoValor, setInclusoNoValor] = useState(false);
   const [savingDeslocamento, setSavingDeslocamento] = useState(false);
   const [deslocamentoError, setDeslocamentoError] = useState<string | null>(null);
 
@@ -145,7 +147,7 @@ export default function EditarEventoModal({
     supabase
       .from("rentals")
       .select(
-        "id, event_date, event_date_end, shots, calculated_value, payment_method, equipment_id, km_ida, valor_deslocamento, equipments(name, serial_number, anvisa_registro)"
+        "id, event_date, event_date_end, shots, calculated_value, payment_method, equipment_id, km_ida, valor_deslocamento, deslocamento_incluso_no_valor, equipments(name, serial_number, anvisa_registro)"
       )
       .eq("id", event.rental_id)
       .single()
@@ -161,6 +163,7 @@ export default function EditarEventoModal({
           };
           setRentalDetails(normalized);
           setKmIda(normalized.km_ida ? String(normalized.km_ida) : "");
+          setInclusoNoValor(!!normalized.deslocamento_incluso_no_valor);
           setValorDeslocamento(normalized.valor_deslocamento ? String(normalized.valor_deslocamento).replace(".", ",") : "");
         }
       });
@@ -181,6 +184,7 @@ export default function EditarEventoModal({
       p_rental_id: event.rental_id,
       p_km_ida: kmIdaNumber > 0 ? kmIdaNumber : null,
       p_valor_deslocamento: valorDeslocamentoNumber,
+      p_incluso_no_valor: inclusoNoValor,
     });
     setSavingDeslocamento(false);
     if (error) {
@@ -615,8 +619,23 @@ export default function EditarEventoModal({
                 </div>
                 <p className="mt-1 text-xs text-neutral-400">
                   Valor que o cliente pagou de ajuda de custo pelo deslocamento, cobrado à parte do valor da locação.
-                  Deixe em branco (ou zere) para remover um deslocamento lançado por engano.
+                  Entra no financeiro como entrada "Deslocamento" (mesma forma de pagamento e data da locação), mas não
+                  conta no faturamento. Deixe em branco (ou zere) para remover.
                 </p>
+                {valorDeslocamentoNumber > 0 && (
+                  <label className="mt-2 flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                    <input
+                      type="checkbox"
+                      checked={inclusoNoValor}
+                      onChange={(e) => setInclusoNoValor(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Esse valor já está somado no valor da locação (veio da calculadora). Marcado, não lança no
+                      financeiro, para não contar duas vezes.
+                    </span>
+                  </label>
+                )}
                 <label className="mb-1 mt-2 block text-xs font-medium text-neutral-500 dark:text-neutral-500">
                   Km de ida (opcional, só para registro — não calcula o valor acima)
                 </label>
