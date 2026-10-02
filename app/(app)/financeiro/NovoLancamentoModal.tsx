@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+import { hojeLocal } from "@/lib/period";
 const PAYMENT_METHODS = [
   { value: "pix", label: "PIX" },
   { value: "dinheiro", label: "Dinheiro" },
@@ -41,7 +42,7 @@ export default function NovoLancamentoModal({
   const [amount, setAmount] = useState("");
   const [clientId, setClientId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("pix");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => hojeLocal());
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
