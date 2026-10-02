@@ -48,6 +48,9 @@ interface RentalToEdit {
   // que a locação já existe. Nulo/ausente = nenhum deslocamento lançado.
   km_ida?: number | null;
   valor_deslocamento?: number;
+  // Leva AC: true = deslocamento já somado em calculated_value (calculadora);
+  // não gera lançamento próprio no financeiro.
+  deslocamento_incluso_no_valor?: boolean;
 }
 
 interface RentalPayment {
@@ -106,6 +109,7 @@ export default function EditarLocacaoModal({
     rental.valor_deslocamento ? String(rental.valor_deslocamento).replace(".", ",") : ""
   );
   const [kmIda, setKmIda] = useState(rental.km_ida ? String(rental.km_ida) : "");
+  const [inclusoNoValor, setInclusoNoValor] = useState(!!rental.deslocamento_incluso_no_valor);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -166,6 +170,7 @@ export default function EditarLocacaoModal({
   const [payments, setPayments] = useState<RentalPayment[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(true);
   const [saldoDevedor, setSaldoDevedor] = useState<number | null>(null);
+  const [totalDespesas, setTotalDespesas] = useState(0);
 
   const [novoValor, setNovoValor] = useState("");
   const [novaForma, setNovaForma] = useState("pix");
@@ -173,9 +178,16 @@ export default function EditarLocacaoModal({
   const [addingPayment, setAddingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
+  // Leva AC: lucro = o que de fato entrou (pagamentos + ajuda de custo lançada
+  // à parte) menos os custos ligados à locação. Ajuda de custo que já está
+  // somada no valor da locação não entra de novo: os pagamentos já a cobrem.
+  const totalRecebido = payments.reduce((acc, p) => acc + Number(p.valor ?? 0), 0);
+  const ajudaCustoLancada = rental.deslocamento_incluso_no_valor ? 0 : Number(rental.valor_deslocamento ?? 0);
+  const lucroLiquido = totalRecebido + ajudaCustoLancada - totalDespesas;
+
   async function carregarPagamentos() {
     setLoadingPayments(true);
-    const [{ data: pagamentos }, { data: situacao }] = await Promise.all([
+    const [{ data: pagamentos }, { data: situacao }, { data: despesas }] = await Promise.all([
       supabase
         .from("rental_payments")
         .select("id, forma, valor, data, pix_conta")
@@ -186,7 +198,9 @@ export default function EditarLocacaoModal({
         .select("saldo")
         .eq("rental_id", rental.id)
         .maybeSingle(),
+      supabase.from("transactions").select("amount").eq("rental_id", rental.id).eq("type", "saida"),
     ]);
+    setTotalDespesas((despesas ?? []).reduce((acc, d: any) => acc + Number(d.amount ?? 0), 0));
     setPayments(pagamentos ?? []);
     setSaldoDevedor(situacao?.saldo ?? null);
     setLoadingPayments(false);
@@ -317,6 +331,7 @@ export default function EditarLocacaoModal({
       p_rental_id: rental.id,
       p_km_ida: kmIdaNumber > 0 ? kmIdaNumber : null,
       p_valor_deslocamento: valorDeslocamentoNumber,
+      p_incluso_no_valor: inclusoNoValor,
     });
 
     setSaving(false);
@@ -517,6 +532,22 @@ export default function EditarLocacaoModal({
             {paymentError && <p className="mt-2 text-xs text-red-500">{paymentError}</p>}
           </div>
 
+          {!loadingPayments && (
+            <div className="rounded-xl border border-neutral-200 p-3 text-sm dark:border-neutral-700">
+              <p className="mb-1 text-xs font-medium text-neutral-600 dark:text-neutral-400">Lucro líquido desta locação</p>
+              <div className="space-y-0.5 text-neutral-700 dark:text-neutral-300">
+                <div className="flex justify-between"><span>Recebido da locação</span><span>{formatCurrency(totalRecebido)}</span></div>
+                {ajudaCustoLancada > 0 && (
+                  <div className="flex justify-between"><span>Ajuda de custo (deslocamento)</span><span>{formatCurrency(ajudaCustoLancada)}</span></div>
+                )}
+                <div className="flex justify-between"><span>Custos (gasolina etc.)</span><span>− {formatCurrency(totalDespesas)}</span></div>
+                <div className={`flex justify-between border-t border-neutral-200 pt-1 font-semibold dark:border-neutral-700 ${lucroLiquido >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                  <span>Lucro líquido</span><span>{formatCurrency(lucroLiquido)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-400">
               Ajuda de custo — deslocamento (opcional)
@@ -532,9 +563,24 @@ export default function EditarLocacaoModal({
               />
             </div>
             <p className="mt-1 text-xs text-neutral-400">
-              Valor que o cliente pagou de ajuda de custo pelo deslocamento, cobrado à parte do valor da locação. Deixe
-              em branco (ou zere) para remover um deslocamento lançado por engano.
+              Valor que o cliente pagou de ajuda de custo pelo deslocamento, cobrado à parte do valor da locação. Entra
+              no financeiro como entrada "Deslocamento" (mesma forma de pagamento e data da locação), mas não conta no
+              faturamento. Deixe em branco (ou zere) para remover.
             </p>
+            {valorDeslocamentoNumber > 0 && (
+              <label className="mt-2 flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                <input
+                  type="checkbox"
+                  checked={inclusoNoValor}
+                  onChange={(e) => setInclusoNoValor(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  Esse valor já está somado no valor da locação (veio da calculadora). Marcado, não lança no
+                  financeiro, para não contar duas vezes.
+                </span>
+              </label>
+            )}
             <label className="mb-1 mt-2 block text-xs font-medium text-neutral-500 dark:text-neutral-500">
               Km de ida (opcional, só para registro — não calcula o valor acima)
             </label>
